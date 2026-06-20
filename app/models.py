@@ -41,6 +41,7 @@ class Item:
     status: str = "open"  # open | done
     needs_review: bool = False  # §14 확인 필요
     review_reason: str | None = None
+    google_event_id: str | None = None  # 구글 캘린더 양방향 매핑
     id: int | None = None
     created_at: str | None = None
 

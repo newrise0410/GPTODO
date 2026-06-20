@@ -59,6 +59,43 @@ fetch("/api/messages")
   })
   .catch(() => {});
 
+// 구글 캘린더 양방향 동기화
+document.getElementById("sync").addEventListener("click", async () => {
+  const btn = document.getElementById("sync");
+  const st = await fetch("/api/sync/status").then((r) => r.json()).catch(() => null);
+  if (!st) return;
+  if (!st.configured) {
+    alert(
+      "구글 양방향 연동 설정이 필요해요:\n\n" +
+      "1. Google Cloud Console에서 OAuth 클라이언트(데스크톱/웹) 생성\n" +
+      "2. 승인된 리디렉션 URI에 " + location.origin + "/oauth/google/callback 추가\n" +
+      "3. 서버 실행 시 환경변수 GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET 설정\n\n" +
+      "그 다음 다시 🔄 를 누르면 구글 로그인으로 연결됩니다."
+    );
+    return;
+  }
+  if (!st.authed) {
+    location.href = "/oauth/google/start"; // 구글 로그인으로
+    return;
+  }
+  btn.classList.add("spin");
+  try {
+    const res = await fetch("/api/sync", { method: "POST" });
+    const d = await res.json();
+    if (!res.ok) { alert("동기화 실패: " + (d.detail || "")); return; }
+    const wrap = el("div", "msg assistant");
+    wrap.appendChild(renderView(d.view));
+    chatEl.appendChild(wrap);
+    chatEl.scrollTop = chatEl.scrollHeight;
+    const c = d.counts;
+    alert(`동기화 완료\n올림 ${c.pushed || 0} · 받음 ${(c.created || 0) + (c.updated || 0)} · 삭제 ${c.deleted || 0}`);
+  } catch (e) {
+    alert("동기화 오류: " + e.message);
+  } finally {
+    btn.classList.remove("spin");
+  }
+});
+
 // 캘린더 구독 — 피드 URL 복사 + 안내
 document.getElementById("subscribe").addEventListener("click", async () => {
   const url = location.origin + "/calendar.ics";

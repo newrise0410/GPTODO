@@ -37,7 +37,15 @@ CREATE TABLE IF NOT EXISTS items (
     status       TEXT NOT NULL DEFAULT 'open',
     needs_review INTEGER NOT NULL DEFAULT 0,
     review_reason TEXT,
+    google_event_id TEXT,
     created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
+# 구글 캘린더에서 삭제 전파용 — 로컬에서 지운 항목의 google_event_id 보관(다음 동기화에 원격 삭제).
+TOMBSTONE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS gcal_deletions (
+    google_event_id TEXT PRIMARY KEY
 );
 """
 
@@ -55,7 +63,7 @@ CREATE TABLE IF NOT EXISTS messages (
 _COLS = [
     "title", "kind", "date", "time", "category", "priority", "recurrence",
     "project", "location", "people", "estimate_min", "deadline", "parent_id",
-    "sort_order", "status", "needs_review", "review_reason",
+    "sort_order", "status", "needs_review", "review_reason", "google_event_id",
 ]
 
 # 기존 DB에 없을 수 있는 컬럼 → ALTER TABLE로 보강(가벼운 마이그레이션).
@@ -77,6 +85,7 @@ _COLUMN_DDL = {
     "status": "status TEXT NOT NULL DEFAULT 'open'",
     "needs_review": "needs_review INTEGER NOT NULL DEFAULT 0",
     "review_reason": "review_reason TEXT",
+    "google_event_id": "google_event_id TEXT",
 }
 
 
@@ -93,6 +102,7 @@ def init() -> None:
     with _conn() as conn:
         conn.executescript(SCHEMA)
         conn.executescript(MESSAGES_SCHEMA)
+        conn.executescript(TOMBSTONE_SCHEMA)
         existing = {r["name"] for r in conn.execute("PRAGMA table_info(items)")}
         for col, ddl in _COLUMN_DDL.items():
             if col not in existing:
@@ -137,6 +147,10 @@ def _update(conn: sqlite3.Connection, item_id: int, changes: dict) -> int:
 
 
 def _delete(conn: sqlite3.Connection, item_id: int) -> int:
+    row = conn.execute("SELECT google_event_id FROM items WHERE id = ?", (item_id,)).fetchone()
+    if row and row["google_event_id"]:  # 원격에도 반영되도록 tombstone 기록
+        conn.execute("INSERT OR IGNORE INTO gcal_deletions (google_event_id) VALUES (?)",
+                     (row["google_event_id"],))
     cur = conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
     return cur.rowcount
 
@@ -225,6 +239,26 @@ def get(item_id: int) -> Item | None:
     with _conn() as conn:
         row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
     return Item.from_row(dict(row)) if row else None
+
+
+def set_gcal_id(item_id: int, event_id: str | None) -> None:
+    with _conn() as conn:
+        conn.execute("UPDATE items SET google_event_id = ? WHERE id = ?", (event_id, item_id))
+
+
+def add_tombstone(event_id: str) -> None:
+    with _conn() as conn:
+        conn.execute("INSERT OR IGNORE INTO gcal_deletions (google_event_id) VALUES (?)", (event_id,))
+
+
+def all_tombstones() -> list[str]:
+    with _conn() as conn:
+        return [r["google_event_id"] for r in conn.execute("SELECT google_event_id FROM gcal_deletions")]
+
+
+def clear_tombstone(event_id: str) -> None:
+    with _conn() as conn:
+        conn.execute("DELETE FROM gcal_deletions WHERE google_event_id = ?", (event_id,))
 
 
 def clear() -> None:

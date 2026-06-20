@@ -586,6 +586,81 @@ def test_feed_and_ics_endpoints(client):
     assert client.get(f"/api/items/{mid}/ics").status_code == 404
 
 
+class FakeGCal:
+    """gcal.GoogleCalendar 대역 — 외부 호출 없이 sync 로직 검증."""
+    def __init__(self, changes=None):
+        self.events = {}
+        self._n = 0
+        self._changes = changes or []
+        self.saved_token = None
+
+    def insert_event(self, body):
+        self._n += 1
+        eid = f"g{self._n}"
+        self.events[eid] = body
+        return eid
+
+    def update_event(self, eid, body):
+        if eid not in self.events:
+            raise KeyError(eid)
+        self.events[eid] = body
+
+    def delete_event(self, eid):
+        self.events.pop(eid, None)
+
+    def list_changes(self):
+        return self._changes, "synctok-1"
+
+    def save_sync_token(self, token):
+        self.saved_token = token
+
+
+def test_sync_push_insert_update_delete():
+    from app import sync
+    apply_operations([{"op": "add", "item": {
+        "title": "면접", "kind": "event", "date": _d(1), "time": "15:00"}}])
+    iid = store.all_items()[0].id
+    fake = FakeGCal()
+    c1 = sync.push(fake)
+    assert c1["pushed"] == 1 and len(fake.events) == 1
+    assert store.get(iid).google_event_id is not None      # 매핑 저장됨
+    # 다시 push → update(신규 생성 아님)
+    assert sync.push(fake)["pushed"] == 1 and len(fake.events) == 1
+    # 완료 → 원격에서 제거
+    apply_operations([{"op": "complete", "id": iid}])
+    assert sync.push(fake)["deleted"] == 1 and len(fake.events) == 0
+    assert store.get(iid).google_event_id is None
+
+
+def test_sync_push_delete_tombstone():
+    from app import sync
+    apply_operations([{"op": "add", "item": {
+        "title": "회의", "kind": "event", "date": _d(1), "time": "10:00"}}])
+    iid = store.all_items()[0].id
+    fake = FakeGCal()
+    sync.push(fake)                                         # 매핑 생성
+    eid = store.get(iid).google_event_id
+    apply_operations([{"op": "delete", "id": iid}])         # 삭제 → tombstone
+    assert eid in store.all_tombstones()
+    assert sync.push(fake)["deleted"] == 1 and eid not in fake.events
+    assert store.all_tombstones() == []
+
+
+def test_sync_pull_create_update_cancel():
+    from app import sync
+    # 1) 구글에서 직접 만든 일정 → 로컬 생성
+    fake = FakeGCal(changes=[{"id": "ext1", "status": "confirmed", "summary": "외부미팅",
+                              "start": {"date": _d(2)}}])
+    assert sync.pull(fake)["created"] == 1
+    created = [i for i in store.all_items() if i.title == "외부미팅"][0]
+    assert created.google_event_id == "ext1" and created.date == _d(2)
+    assert fake.saved_token == "synctok-1"
+    # 2) 같은 이벤트 취소 → 로컬 삭제
+    fake2 = FakeGCal(changes=[{"id": "ext1", "status": "cancelled"}])
+    assert sync.pull(fake2)["removed"] == 1
+    assert not [i for i in store.all_items() if i.title == "외부미팅"]
+
+
 @pytest.fixture
 def client():
     return TestClient(app)

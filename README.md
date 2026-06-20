@@ -52,6 +52,11 @@ app/
   일정별 **구글 추가 링크 / .ics 다운로드** 버튼도 제공. 일정·마감이 date·time 비면 '캘린더 정보 필요'로 질문.
   - 애플: 파일 → 새로운 캘린더 구독 → `http://<host>/calendar.ics`
   - 구글: 다른 캘린더 + → URL로 추가 → 같은 주소
+- **구글 양방향 동기화**(`gcal.py`/`sync.py`): 헤더 🔄 버튼 → OAuth 연결 후 수동 동기화.
+  로컬→구글(올림: 생성/수정/완료제거/삭제) + 구글→로컬(받음: 신규/수정/취소)을 전용 'GPTODO' 캘린더로.
+  매핑은 `items.google_event_id` + `extendedProperties.gptodo_id`, 삭제 전파는 tombstone.
+  - 전제: Google Cloud OAuth 클라이언트 생성 → `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` 설정
+  - 리디렉션 URI: `http://localhost:8000/oauth/google/callback`
 
 ## 실행
 

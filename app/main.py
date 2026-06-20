@@ -12,13 +12,16 @@ from pathlib import Path
 
 import json
 
+import os
+
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response, StreamingResponse
+from fastapi.responses import (HTMLResponse, PlainTextResponse, RedirectResponse,
+                               Response, StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import icalfeed, menu, store, timeutil, views
+from . import gcal, icalfeed, menu, store, sync, timeutil, views
 from .llm import CodexAuthError, apply_operations, extract, stream
 from .models import coerce_changes
 
@@ -202,6 +205,53 @@ def item_ics(item_id: int):
         raise HTTPException(status_code=404, detail="캘린더에 넣을 수 있는 일정이 아니에요.")
     return Response(icalfeed.single_ics(it), media_type="text/calendar; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="item-{item_id}.ics"'})
+
+
+def _redirect_uri(request: Request) -> str:
+    return os.environ.get("GOOGLE_REDIRECT_URI") or str(request.base_url) + "oauth/google/callback"
+
+
+@app.get("/oauth/google/start")
+def google_start(request: Request):
+    if not gcal.is_configured():
+        raise HTTPException(status_code=400,
+                            detail="GOOGLE_CLIENT_ID/SECRET 환경변수를 먼저 설정해주세요.")
+    return RedirectResponse(gcal.auth_url(_redirect_uri(request)))
+
+
+@app.get("/oauth/google/callback", response_class=HTMLResponse)
+def google_callback(request: Request, code: str | None = None, error: str | None = None):
+    if error or not code:
+        return HTMLResponse(f"<p>연결 실패: {error or '코드 없음'}</p><a href='/'>돌아가기</a>")
+    try:
+        gcal.exchange_code(code, _redirect_uri(request))
+    except gcal.GCalError as e:
+        return HTMLResponse(f"<p>토큰 교환 실패: {e}</p><a href='/'>돌아가기</a>")
+    return HTMLResponse("<p>구글 캘린더 연결 완료! 창을 닫고 동기화를 눌러주세요.</p>"
+                        "<script>setTimeout(()=>{location.href='/'},1200)</script>")
+
+
+@app.get("/api/sync/status")
+def sync_status():
+    return gcal.status()
+
+
+@app.post("/api/sync")
+def api_sync():
+    try:
+        client = gcal.GoogleCalendar()
+        counts = sync.sync(client)
+    except gcal.NotAuthed as e:
+        raise HTTPException(status_code=401, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"동기화 실패: {e}") from e
+    return {"ok": True, "counts": counts, "view": views.build_calendar(store.all_items(), "all")}
+
+
+@app.post("/api/google/disconnect")
+def google_disconnect():
+    gcal.disconnect()
+    return {"ok": True}
 
 
 @app.get("/api/today")

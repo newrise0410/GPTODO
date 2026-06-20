@@ -46,11 +46,25 @@ _COLS = [
 ]
 
 # 기존 DB에 없을 수 있는 컬럼 → ALTER TABLE로 보강(가벼운 마이그레이션).
-_MIGRATIONS = [
-    ("deadline", "deadline TEXT"),
-    ("parent_id", "parent_id INTEGER"),
-    ("sort_order", "sort_order INTEGER NOT NULL DEFAULT 0"),
-]
+# 모든 데이터 컬럼의 DDL을 명시해, 어느 컬럼이 빠진 구버전이든 안전하게 보강.
+_COLUMN_DDL = {
+    "kind": "kind TEXT NOT NULL DEFAULT 'todo'",
+    "date": "date TEXT",
+    "time": "time TEXT",
+    "category": "category TEXT",
+    "priority": "priority TEXT",
+    "recurrence": "recurrence TEXT",
+    "project": "project TEXT",
+    "location": "location TEXT",
+    "people": "people TEXT",
+    "estimate_min": "estimate_min INTEGER",
+    "deadline": "deadline TEXT",
+    "parent_id": "parent_id INTEGER",
+    "sort_order": "sort_order INTEGER NOT NULL DEFAULT 0",
+    "status": "status TEXT NOT NULL DEFAULT 'open'",
+    "needs_review": "needs_review INTEGER NOT NULL DEFAULT 0",
+    "review_reason": "review_reason TEXT",
+}
 
 
 def _conn() -> sqlite3.Connection:
@@ -66,7 +80,7 @@ def init() -> None:
     with _conn() as conn:
         conn.executescript(SCHEMA)
         existing = {r["name"] for r in conn.execute("PRAGMA table_info(items)")}
-        for col, ddl in _MIGRATIONS:
+        for col, ddl in _COLUMN_DDL.items():
             if col not in existing:
                 conn.execute(f"ALTER TABLE items ADD COLUMN {ddl}")
 

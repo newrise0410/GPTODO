@@ -93,16 +93,23 @@ def _note_prefix(buf: str) -> str:
 
 
 def _parse(full: str) -> dict[str, Any]:
-    """전체 응답 → {reply, operations, questions}. 센티넬 우선, 실패 시 폴백."""
+    """전체 응답 → {reply, operations, questions}. 센티넬 우선, 실패 시 폴백.
+
+    operations/questions 타입을 방어적으로 검증한다(모델이 dict 대신 문자열 등을 줘도 안전).
+    """
     reply = _note_prefix(full)
     json_part = full.split(SENTINEL, 1)[1] if SENTINEL in full else full
-    data = _loads(json_part) or {}
+    data = _loads(json_part)
+    if not isinstance(data, dict):
+        data = {}
     if not reply:  # 폴백: JSON 안에 reply가 있던 옛 형식 호환
         reply = str(data.get("reply", "")).strip()
+    ops = data.get("operations")
+    questions = data.get("questions")
     return {
         "reply": reply,
-        "operations": data.get("operations") or [],
-        "questions": (data.get("questions") or [])[:2],
+        "operations": ops if isinstance(ops, list) else [],
+        "questions": [str(q) for q in questions[:2]] if isinstance(questions, list) else [],
     }
 
 

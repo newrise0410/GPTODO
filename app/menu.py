@@ -30,6 +30,11 @@ _ALIASES: dict[str, Callable[[list], dict]] = {
     "표": views.build_table, "표로": views.build_table, "테이블": views.build_table,
     "체크리스트": views.build_checklist, "체크리스트로": views.build_checklist,
     "요약": views.build_summary, "요약해서": views.build_summary, "요약 보기": views.build_summary,
+    "분류": views.build_categories, "분류해서": views.build_categories,
+    "분류해줘": views.build_categories, "카테고리별로": views.build_categories,
+    "프로젝트별로": views.build_projects, "프로젝트별": views.build_projects,
+    "캘린더로": lambda items: views.build_calendar(items, "all"),
+    "대시보드로": views.build_dashboard,
 }
 
 MENU_LABELS = set(_SCOPE_VIEWS) | set(_OTHER_VIEWS) | {"🔄 날짜 갱신"}

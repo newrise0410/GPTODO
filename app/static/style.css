@@ -109,6 +109,9 @@ header {
   flex: none; user-select: none;
 }
 .item .check:hover { color: var(--accent); }
+/* 가상 반복 인스턴스 등 id 없는 항목은 토글 불가 */
+.item .check:not([data-id]) { cursor: default; opacity: .4; }
+.item .check:not([data-id]):hover { color: var(--muted); }
 .item.done .check { color: var(--tone); }
 .item .time {
   font-variant-numeric: tabular-nums; color: var(--text);

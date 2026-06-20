@@ -91,21 +91,21 @@ def coerce_item(raw: dict[str, Any]) -> Item:
     deadline = pick("deadline")
     if deadline and not timeutil.parse_date(deadline):
         deadline = None
-    time = pick("time")
     return Item(
         title=title,
         kind=kind,
         date=date,
-        time=time if _valid_time(time) else None,
+        time=_norm_time(pick("time")),
         category=pick("category", CATEGORIES),
         priority=pick("priority", list(PRIORITY_RANK)),
         recurrence=pick("recurrence"),
         project=pick("project"),
         location=pick("location"),
         people=pick("people"),
-        estimate_min=_as_int(raw.get("estimate_min")),
+        estimate_min=_as_minutes(raw.get("estimate_min")),
         deadline=deadline,
         parent_id=_as_int(raw.get("parent_id")),
+        sort_order=_as_int(raw.get("sort_order")) or 0,
         needs_review=_as_bool(raw.get("needs_review")),
         review_reason=pick("review_reason"),
     )
@@ -147,11 +147,10 @@ def coerce_changes(changes: dict[str, Any]) -> dict[str, Any]:
             if n is not None:
                 out[k] = n
         elif k == "time":
-            s = _as_str(v)
             if v is None:
                 out[k] = None
-            elif s and _valid_time(s):
-                out[k] = s
+            elif (t := _norm_time(_as_str(v))):
+                out[k] = t
         elif k == "category":
             if v in CATEGORIES or v is None:
                 out[k] = v
@@ -159,8 +158,9 @@ def coerce_changes(changes: dict[str, Any]) -> dict[str, Any]:
             if v in PRIORITY_RANK:
                 out[k] = v
         elif k == "estimate_min":
-            n = _as_int(v)
-            if n is not None:
+            if v is None:
+                out[k] = None                  # 소요시간 지우기 허용
+            elif (n := _as_minutes(v)) is not None:
                 out[k] = n
         elif k == "needs_review":
             out[k] = _as_bool(v)
@@ -206,11 +206,32 @@ def _as_str(v: Any) -> str | None:
     return v or None
 
 
-def _valid_time(t: Any) -> bool:
+def _norm_time(t: Any) -> str | None:
+    """시간을 정확히 'HH:MM'으로 정규화(초 단위 절삭). 잘못된 값은 None."""
     if not isinstance(t, str):
-        return False
+        return None
     try:
-        dt.time.fromisoformat(t)
-        return True
+        parsed = dt.time.fromisoformat(t.strip())  # HH:MM, HH:MM:SS 모두 허용
     except ValueError:
-        return False
+        return None
+    return f"{parsed.hour:02d}:{parsed.minute:02d}"
+
+
+def _as_minutes(v: Any) -> int | None:
+    """예상 소요시간을 분(양수)으로. 'N시간'/'N시간 M분'/'N분'/숫자 지원. 비현실값은 버림."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        n = int(v)
+        return n if 0 < n <= 7 * 24 * 60 else None
+    if isinstance(v, str):
+        h = re.search(r"(\d+)\s*시간", v)
+        m = re.search(r"(\d+)\s*분", v)
+        if h or m:
+            total = (int(h.group(1)) * 60 if h else 0) + (int(m.group(1)) if m else 0)
+            return total if 0 < total <= 7 * 24 * 60 else None
+        digits = re.search(r"\d+", v)
+        if digits:
+            n = int(digits.group())
+            return n if 0 < n <= 7 * 24 * 60 else None
+    return None

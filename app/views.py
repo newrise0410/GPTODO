@@ -64,7 +64,8 @@ def detect_conflicts(items: list[Item]) -> list[tuple[str, list[Item]]]:
     """같은 날짜에서 시간 구간이 겹치는 일정 묶음을 찾는다(estimate_min을 길이로 사용)."""
     by_date: dict[str, list[Item]] = defaultdict(list)
     for it in items:
-        if it.status == "done" or it.kind != "event" or not it.date or not it.time:
+        # 시간이 박힌 항목이면 종류 무관(메모/아이디어 제외) 충돌 후보
+        if it.status == "done" or _is_note(it) or not it.date or not it.time:
             continue
         by_date[it.date].append(it)
 
@@ -130,7 +131,9 @@ def build_calendar(items: list[Item], scope: str = "all") -> dict[str, Any]:
     open_items = [i for i in items if i.status != "done"]
     notes = [i for i in open_items if _is_note(i)]
     schedulable = [i for i in open_items if not _is_note(i)]
-    dated = [i for i in schedulable if i.date_obj and timeutil.in_scope(i.date_obj, scope, ref)]
+    # 반복 항목은 dated가 아니라 recurring으로만(중복 표시 방지)
+    dated = [i for i in schedulable
+             if i.date_obj and not i.recurrence and timeutil.in_scope(i.date_obj, scope, ref)]
     undated = [i for i in schedulable if not i.date_obj and not i.recurrence]
     recurring = [i for i in schedulable if i.recurrence]
 
@@ -175,7 +178,8 @@ def build_calendar(items: list[Item], scope: str = "all") -> dict[str, Any]:
         rows = [_item_view(it, note=KIND_LABEL[it.kind]) for it in notes]
         sections.append(_section("메모·아이디어", "memo", items=rows))
 
-    conflict = _conflict_section(schedulable)
+    # 충돌은 펼쳐진 반복 인스턴스까지 포함해 검사(기간 보기 정확도)
+    conflict = _conflict_section([it for day in by_date.values() for it in day])
     if conflict:
         sections.append(conflict)
 
@@ -229,8 +233,12 @@ def _project_rows(group: list[Item]) -> list[dict]:
         if it.parent_id and it.parent_id in ids:
             children[it.parent_id].append(it)
     rows: list[dict] = []
+    seen: set[int] = set()  # 사이클/자기참조 방어
 
     def emit(it: Item, depth: int) -> None:
+        if it.id in seen or depth > 10:
+            return
+        seen.add(it.id)
         rows.append(_item_view(it, with_date=True, depth=depth))
         for c in sorted(children.get(it.id, []), key=lambda i: (i.sort_order, i.id or 0)):
             emit(c, depth + 1)
@@ -238,6 +246,10 @@ def _project_rows(group: list[Item]) -> list[dict]:
     roots = [it for it in group if not (it.parent_id and it.parent_id in ids)]
     for it in sorted(roots, key=lambda i: (i.sort_order, i.date or "9999", i.rank)):
         emit(it, 0)
+    # 사이클로 누락된 항목은 평면으로라도 노출(잃어버리지 않게)
+    for it in group:
+        if it.id not in seen:
+            rows.append(_item_view(it, with_date=True))
     return rows
 
 

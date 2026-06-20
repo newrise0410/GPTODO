@@ -28,7 +28,8 @@ def _weekdays_in(text: str) -> set[int]:
     rest = re.sub(r"[월화수목금토일]요일", " ", text)
     for kw in ("매월", "매주", "매일", "마다", "평일", "주말", "매년"):
         rest = rest.replace(kw, " ")
-    rest = re.sub(r"\d+\s*일", " ", rest)  # '1일' 같은 날짜의 '일' 제외
+    rest = re.sub(r"\d+\s*월", " ", rest)  # 'N월'의 '월'(월요일 오인) 제외
+    rest = re.sub(r"\d+\s*일", " ", rest)  # 'N일' 같은 날짜의 '일' 제외
     for ch in rest:
         if ch in _WEEKDAY_TOKENS:
             days.add(_WEEKDAY_TOKENS[ch])
@@ -48,7 +49,10 @@ def _days_in_month(d: dt.date) -> int:
     return (nxt - dt.timedelta(days=1)).day
 
 
-def _matches(text: str, d: dt.date) -> bool:
+def _matches(text: str, d: dt.date, anchor: dt.date | None = None) -> bool:
+    if "매년" in text:
+        m = re.search(r"(\d{1,2})\s*월\s*(\d{1,2})\s*일", text)
+        return bool(m) and d.month == int(m.group(1)) and d.day == int(m.group(2))
     if "매일" in text:
         return True
     if "평일" in text:
@@ -70,6 +74,9 @@ def _matches(text: str, d: dt.date) -> bool:
         if word in text:
             return (n - 1) * 7 < d.day <= n * 7
     if "격주" in text:
+        # 시작 기준(anchor)이 있으면 그로부터 2주 주기, 없으면 ISO week parity
+        if anchor:
+            return ((d - anchor).days // 7) % 2 == 0
         return d.isocalendar()[1] % 2 == 0
     return True  # 매주/마다/요일만 → 매주
 
@@ -77,7 +84,7 @@ def _matches(text: str, d: dt.date) -> bool:
 def is_parseable(text: str | None) -> bool:
     if not text:
         return False
-    if any(k in text for k in ("매일", "평일", "주말", "매월")):
+    if any(k in text for k in ("매일", "평일", "주말", "매월", "매년")):
         return True
     return bool(_weekdays_in(text))
 
@@ -90,10 +97,11 @@ def occurrences(item: Item, lo: dt.date, hi: dt.date) -> list[Item]:
     text = item.recurrence or ""
     if not is_parseable(text):
         return []
+    anchor = item.date_obj  # 격주 시작 기준(있으면)
     out: list[Item] = []
     cur = lo
     while cur <= hi:
-        if _matches(text, cur):
+        if _matches(text, cur, anchor):
             out.append(replace(item, id=None, date=cur.isoformat()))
         cur += dt.timedelta(days=1)
     return out

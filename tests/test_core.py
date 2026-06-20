@@ -337,6 +337,59 @@ def test_migration_adds_columns(tmp_path, monkeypatch):
     assert store.all_items()[0].deadline == _d(1)
 
 
+# ───────── Codex 리뷰 2차 회귀 ─────────
+
+def test_time_normalized_and_no_conflict_crash():
+    # HH:MM:SS 입력도 HH:MM으로 정규화되어 충돌 감지가 깨지지 않음
+    assert coerce_item({"title": "x", "time": "09:30:00"}).time == "09:30"
+    apply_operations([
+        {"op": "add", "item": {"title": "A", "kind": "event", "date": _d(0), "time": "10:00:00"}},
+        {"op": "add", "item": {"title": "B", "kind": "event", "date": _d(0), "time": "11:00:00"}},
+    ])
+    # 10:00~11:00, 11:00~12:00 → 경계 비충돌
+    assert views.detect_conflicts(store.all_items()) == []
+
+
+def test_estimate_unit_parsing():
+    assert coerce_item({"title": "x", "estimate_min": "2시간"}).estimate_min == 120
+    assert coerce_item({"title": "x", "estimate_min": "1시간 30분"}).estimate_min == 90
+    assert coerce_item({"title": "x", "estimate_min": -5}).estimate_min is None  # 음수 거부
+    assert coerce_changes({"estimate_min": None}) == {"estimate_min": None}      # 지우기 허용
+
+
+def test_sort_order_persisted_and_ordered():
+    apply_operations([{"op": "add", "item": {"title": "P", "project": "X"}}])
+    pid = store.all_items()[0].id
+    apply_operations([
+        {"op": "add", "item": {"title": "둘째", "project": "X", "parent_id": pid, "sort_order": 2}},
+        {"op": "add", "item": {"title": "첫째", "project": "X", "parent_id": pid, "sort_order": 1}},
+    ])
+    titles = [i["title"] for i in _all_items(views.build_projects(store.all_items()))]
+    assert titles == ["P", "첫째", "둘째"]  # sort_order 순서 보존
+
+
+def test_recurrence_no_month_token_confusion():
+    import datetime as _dt
+    item = Item(title="x", kind="event", recurrence="매년 6월 1일")
+    occ = recurrence.occurrences(item, _dt.date(2026, 1, 1), _dt.date(2026, 12, 31))
+    assert {o.date for o in occ} == {"2026-06-01"}  # '6월'의 월이 월요일로 오인되지 않음
+
+
+def test_recurrence_and_date_no_duplicate():
+    # date와 recurrence가 둘 다 있어도 한 날짜에 중복 표시되지 않음
+    apply_operations([{"op": "add", "item": {
+        "title": "회의", "kind": "event", "date": _d(0), "time": "09:00",
+        "recurrence": "매일"}}])
+    week = views.build_calendar(store.all_items(), "week")
+    for sec in week["sections"]:
+        assert sum(1 for i in sec["items"] if i["title"] == "회의") <= 1
+
+
+def test_parse_rejects_bad_types():
+    out = _parse('정리했어요\n===JSON===\n{"operations": "nope", "questions": "hi"}')
+    assert out["operations"] == [] and out["questions"] == []
+
+
 @pytest.fixture
 def client():
     return TestClient(app)

@@ -29,6 +29,14 @@ def resolve(expr: str | None, today: dt.date) -> dt.date | None:
         return None
     s = str(expr).strip()
 
+    # 명시적 'YYYY년 M월 D일' (연도 지정)
+    m = re.search(r"(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일", s)
+    if m:
+        try:
+            return dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return None
+
     # 명시적 'M월 D일' (지났으면 내년)
     m = re.search(r"(\d{1,2})\s*월\s*(\d{1,2})\s*일", s)
     if m:
@@ -42,31 +50,38 @@ def resolve(expr: str | None, today: dt.date) -> dt.date | None:
                 return cand
         return cand
 
+    wd_match = re.search(r"([월화수목금토일])\s*요일", s)
+
+    # 'N주 후/뒤 <요일>' — 요일이 함께면 그 주의 해당 요일
+    m = re.search(r"(\d+)\s*주\s*(뒤|후)", s)
+    if m:
+        weeks = int(m.group(1))
+        if wd_match:
+            monday = today - dt.timedelta(days=today.weekday()) + dt.timedelta(weeks=weeks)
+            return monday + dt.timedelta(days=_WD[wd_match.group(1)])
+        return today + dt.timedelta(weeks=weeks)
+
     # 오늘/내일/모레/글피/어제
     for k, off in _OFFSET_DAYS.items():
         if k in s:
             return today + dt.timedelta(days=off)
 
-    # N일/주 후·뒤
+    # N일 후·뒤
     m = re.search(r"(\d+)\s*일\s*(뒤|후|있다|지나)", s)
     if m:
         return today + dt.timedelta(days=int(m.group(1)))
-    m = re.search(r"(\d+)\s*주\s*(뒤|후)", s)
-    if m:
-        return today + dt.timedelta(weeks=int(m.group(1)))
 
-    # 달 말/초
-    if "말" in s and ("달" in s or "월" in s):
+    # 달 말/초 — '말'+'월'(월요일) 오해석 방지: '달'이 있거나 '월말/말일'일 때만
+    if ("말" in s and "달" in s) or "월말" in s or "말일" in s:
         off = 2 if "다다음" in s else (1 if ("다음" in s or "담" in s) else 0)
         return _month_end(today, off)
-    if "초" in s and ("달" in s or "월" in s):
+    if ("초" in s and "달" in s) or "월초" in s:
         off = 1 if ("다음" in s or "담" in s) else 0
         return _add_months_first(today, off)
 
     # 요일 (이번/다음/다다음 주 + 요일, 또는 단독)
-    mm = re.search(r"([월화수목금토일])\s*요일", s)
-    if mm:
-        wd = _WD[mm.group(1)]
+    if wd_match:
+        wd = _WD[wd_match.group(1)]
         if "다다음" in s:
             weekoff = 2
         elif "다음" in s or "담주" in s or "담 주" in s:

@@ -13,6 +13,7 @@ from pathlib import Path
 import json
 
 import os
+import threading
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import (HTMLResponse, PlainTextResponse, RedirectResponse,
@@ -93,6 +94,7 @@ def _save_turn(user_text: str, view: dict) -> None:
     """LLM 대화 한 턴(사용자+어시스턴트)을 영속화. 메뉴 내비게이션은 저장 안 함."""
     store.add_message("user", user_text)
     store.add_message("assistant", _assistant_context(view), view=view)
+    store.prune_messages()  # 무한 누적 방지(최근 N턴만)
 
 
 def _validate(req: ChatRequest) -> list[dict]:
@@ -250,8 +252,13 @@ def sync_status():
     return gcal.status()
 
 
+_sync_lock = threading.Lock()
+
+
 @app.post("/api/sync")
 def api_sync():
+    if not _sync_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="이미 동기화 중이에요.")
     try:
         client = gcal.GoogleCalendar()
         counts = sync.sync(client)
@@ -259,6 +266,8 @@ def api_sync():
         raise HTTPException(status_code=401, detail=str(e)) from e
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"동기화 실패: {e}") from e
+    finally:
+        _sync_lock.release()
     return {"ok": True, "counts": counts, "view": views.build_calendar(store.all_items(), "all")}
 
 

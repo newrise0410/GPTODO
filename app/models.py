@@ -42,6 +42,7 @@ class Item:
     needs_review: bool = False  # §14 확인 필요
     review_reason: str | None = None
     google_event_id: str | None = None  # 구글 캘린더 양방향 매핑
+    gcal_sig: str | None = None  # 마지막 push 내용 서명(변경분만 올리기 위함)
     id: int | None = None
     created_at: str | None = None
 

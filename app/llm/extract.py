@@ -193,6 +193,15 @@ def _norm_title(t: str) -> str:
     return " ".join((t or "").split()).lower()
 
 
+def _compatible(existing: Item, new: Item) -> bool:
+    """같은 제목이라도 날짜·마감·프로젝트가 서로 다르면 별개 항목으로 본다."""
+    for f in ("date", "deadline", "project"):
+        a, b = getattr(existing, f), getattr(new, f)
+        if a and b and a != b:
+            return False
+    return True
+
+
 def _merge_changes(existing: Item, new: Item) -> dict[str, Any]:
     """기존 항목의 빈 필드를 새 항목 값으로 채우는 변경분. 빈 값(없으면 dict 비움)."""
     changes: dict[str, Any] = {}
@@ -238,7 +247,7 @@ def apply_operations(operations: Any) -> dict[str, int]:
                         nt = _norm_title(it.title)
                         match = next((e for e in open_items if e.id not in claimed
                                       and _norm_title(e.title) == nt
-                                      and not (e.date and it.date and e.date != it.date)), None)
+                                      and _compatible(e, it)), None)
                     if match is not None:
                         claimed.add(match.id)
                         changes = _merge_changes(match, it)

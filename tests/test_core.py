@@ -624,7 +624,10 @@ def test_sync_push_insert_update_delete():
     c1 = sync.push(fake)
     assert c1["pushed"] == 1 and len(fake.events) == 1
     assert store.get(iid).google_event_id is not None      # 매핑 저장됨
-    # 다시 push → update(신규 생성 아님)
+    # 변경 없으면 재 push 스킵(churn 방지)
+    assert sync.push(fake)["pushed"] == 0 and len(fake.events) == 1
+    # 내용 바꾸면 다시 push(update)
+    apply_operations([{"op": "update", "id": iid, "changes": {"time": "16:00"}}])
     assert sync.push(fake)["pushed"] == 1 and len(fake.events) == 1
     # 완료 → 원격에서 제거
     apply_operations([{"op": "complete", "id": iid}])
@@ -659,6 +662,65 @@ def test_sync_pull_create_update_cancel():
     fake2 = FakeGCal(changes=[{"id": "ext1", "status": "cancelled"}])
     assert sync.pull(fake2)["removed"] == 1
     assert not [i for i in store.all_items() if i.title == "외부미팅"]
+
+
+def test_sync_pull_respects_tombstone():
+    from app import sync
+    apply_operations([{"op": "add", "item": {
+        "title": "면접", "kind": "event", "date": _d(1), "time": "15:00"}}])
+    iid = store.all_items()[0].id
+    sync.push(FakeGCal())
+    eid = store.get(iid).google_event_id
+    apply_operations([{"op": "delete", "id": iid}])         # 로컬 삭제 → tombstone
+    # 원격에 같은 이벤트가 (수정됨 상태로) 들어와도 부활하면 안 됨
+    fake = FakeGCal(changes=[{"id": eid, "status": "confirmed", "summary": "면접",
+                              "start": {"date": _d(1)}}])
+    assert sync.pull(fake)["created"] == 0
+    assert not [i for i in store.all_items() if i.title == "면접"]
+
+
+def test_sync_pull_updates_deadline_field():
+    from app import sync
+    apply_operations([{"op": "add", "item": {
+        "title": "세금신고", "kind": "todo", "deadline": _d(2)}}])
+    iid = store.all_items()[0].id
+    sync.push(FakeGCal())
+    eid = store.get(iid).google_event_id
+    # 구글에서 마감일을 옮김 → deadline이 갱신되어야(다음 push에서 되돌지 않게)
+    fake = FakeGCal(changes=[{"id": eid, "status": "confirmed", "summary": "[마감] 세금신고",
+                              "start": {"date": _d(5)},
+                              "extendedProperties": {"private": {
+                                  "gptodo_id": str(iid), "gptodo_field": "deadline"}}}])
+    sync.pull(fake)
+    it = store.get(iid)
+    assert it.deadline == _d(5) and it.date is None
+
+
+def test_merge_keeps_different_deadlines_separate():
+    apply_operations([{"op": "add", "item": {"title": "보고서", "kind": "todo", "deadline": _d(1)}}])
+    apply_operations([{"op": "add", "item": {"title": "보고서", "kind": "todo", "deadline": _d(5)}}])
+    assert len([i for i in store.all_items() if i.title == "보고서"]) == 2
+
+
+def test_dateresolver_more():
+    import datetime as _dt
+    sat = _dt.date(2026, 6, 20)
+    R = lambda e: dateresolve.resolve(e, sat)  # noqa: E731
+    assert R("2026년 6월 25일") == _dt.date(2026, 6, 25)   # 연도 지정
+    assert R("2주 후 화요일") == _dt.date(2026, 6, 30)      # N주 후 + 요일
+    assert R("월말") == _dt.date(2026, 6, 30)              # 월말 = 이번 달 말
+    assert R("월요일") != _dt.date(2026, 6, 30)            # '월'요일이 월말로 오해석되지 않음
+
+
+def test_ical_escape_and_recurrence_uid():
+    apply_operations([
+        {"op": "add", "item": {"title": "A, B; C", "kind": "event", "date": _d(1), "time": "10:00"}},
+        {"op": "add", "item": {"title": "스탠드업", "kind": "event", "time": "09:00", "recurrence": "매일"}},
+    ])
+    ics = icalfeed.build(store.all_items())
+    assert "SUMMARY:A\\, B\\; C" in ics                     # 쉼표/세미콜론 이스케이프
+    rid = [i.id for i in store.all_items() if i.title == "스탠드업"][0]
+    assert f"-{rid}-" in ics                                # 반복 UID에 원본 id 포함
 
 
 @pytest.fixture

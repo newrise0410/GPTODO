@@ -62,8 +62,23 @@ def google_url(item: Item) -> str | None:
 
 
 def _esc(text: str) -> str:
-    return (text.replace("\\", "\\\\").replace(";", "\\;")
-            .replace(",", "\\,").replace("\n", "\\n"))
+    text = (text.replace("\\", "\\\\").replace("\r\n", "\n").replace("\r", "\n"))
+    return text.replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+
+
+def _fold(line: str) -> str:
+    """RFC5545 라인 폴딩 — UTF-8 73바이트 넘으면 CRLF+space로 접는다."""
+    if len(line.encode("utf-8")) <= 73:
+        return line
+    out, cur = [], ""
+    for ch in line:
+        if len((cur + ch).encode("utf-8")) > 73:
+            out.append(cur)
+            cur = ch
+        else:
+            cur += ch
+    out.append(cur)
+    return "\r\n ".join(out)
 
 
 def _vevent(item: Item, stamp: str, uid_suffix: str = "") -> list[str] | None:
@@ -90,11 +105,15 @@ def _vevent(item: Item, stamp: str, uid_suffix: str = "") -> list[str] | None:
     return lines
 
 
+def _wrap(lines: list[str]) -> str:
+    return "\r\n".join(_fold(line) for line in lines) + "\r\n"
+
+
 def single_ics(item: Item) -> str:
     stamp = timeutil.now().astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
     body = _vevent(item, stamp) or []
-    return "\r\n".join(["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//GPTODO//KR",
-                        "CALSCALE:GREGORIAN", *body, "END:VCALENDAR"]) + "\r\n"
+    return _wrap(["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//GPTODO//KR",
+                  "CALSCALE:GREGORIAN", *body, "END:VCALENDAR"])
 
 
 def build(items: list[Item]) -> str:
@@ -110,7 +129,8 @@ def build(items: list[Item]) -> str:
             continue
         if it.recurrence:
             for occ in recurrence.occurrences(it, lo, hi):
-                block = _vevent(occ, stamp, uid_suffix=f"-{occ.date}")
+                # UID에 원본 item id 포함 → 다른 반복 항목이 같은 날 충돌하지 않게
+                block = _vevent(occ, stamp, uid_suffix=f"-{it.id}-{occ.date}")
                 if block:
                     out.extend(block)
         else:
@@ -118,4 +138,4 @@ def build(items: list[Item]) -> str:
             if block:
                 out.extend(block)
     out.append("END:VCALENDAR")
-    return "\r\n".join(out) + "\r\n"
+    return _wrap(out)

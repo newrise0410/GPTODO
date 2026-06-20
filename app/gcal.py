@@ -63,6 +63,10 @@ def _load() -> dict:
 def _save(data: dict) -> None:
     TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
     TOKEN_PATH.write_text(json.dumps(data, indent=2))
+    try:
+        os.chmod(TOKEN_PATH, 0o600)  # client_secret/토큰 평문 → 소유자만 읽기
+    except OSError:
+        pass
 
 
 def is_authed() -> bool:
@@ -173,7 +177,8 @@ class GoogleCalendar:
         return r.json()["id"]
 
     def update_event(self, event_id: str, body: dict) -> None:
-        r = self._req("PUT", f"/calendars/{self.calendar_id()}/events/{event_id}", json=body)
+        # PATCH: 우리가 보내는 필드만 갱신 → 구글에서 추가한 알림/색/설명 등 보존
+        r = self._req("PATCH", f"/calendars/{self.calendar_id()}/events/{event_id}", json=body)
         if r.status_code == 404:
             raise KeyError(event_id)  # 원격에서 사라짐 → 재생성 유도
         if r.status_code != 200:

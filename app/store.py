@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS items (
     needs_review INTEGER NOT NULL DEFAULT 0,
     review_reason TEXT,
     google_event_id TEXT,
+    gcal_sig     TEXT,
     created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
@@ -63,7 +64,7 @@ CREATE TABLE IF NOT EXISTS messages (
 _COLS = [
     "title", "kind", "date", "time", "category", "priority", "recurrence",
     "project", "location", "people", "estimate_min", "deadline", "parent_id",
-    "sort_order", "status", "needs_review", "review_reason", "google_event_id",
+    "sort_order", "status", "needs_review", "review_reason", "google_event_id", "gcal_sig",
 ]
 
 # 기존 DB에 없을 수 있는 컬럼 → ALTER TABLE로 보강(가벼운 마이그레이션).
@@ -86,6 +87,7 @@ _COLUMN_DDL = {
     "needs_review": "needs_review INTEGER NOT NULL DEFAULT 0",
     "review_reason": "review_reason TEXT",
     "google_event_id": "google_event_id TEXT",
+    "gcal_sig": "gcal_sig TEXT",
 }
 
 
@@ -241,9 +243,10 @@ def get(item_id: int) -> Item | None:
     return Item.from_row(dict(row)) if row else None
 
 
-def set_gcal_id(item_id: int, event_id: str | None) -> None:
+def set_gcal_id(item_id: int, event_id: str | None, sig: str | None = None) -> None:
     with _conn() as conn:
-        conn.execute("UPDATE items SET google_event_id = ? WHERE id = ?", (event_id, item_id))
+        conn.execute("UPDATE items SET google_event_id = ?, gcal_sig = ? WHERE id = ?",
+                     (event_id, sig, item_id))
 
 
 def add_tombstone(event_id: str) -> None:
@@ -289,6 +292,14 @@ def all_messages() -> list[dict]:
             "view": json.loads(r["view_json"]) if r["view_json"] else None,
         })
     return out
+
+
+def prune_messages(keep: int = 200) -> None:
+    """최근 keep개만 남기고 오래된 대화 기록 정리(무한 누적 방지)."""
+    with _conn() as conn:
+        conn.execute(
+            "DELETE FROM messages WHERE id NOT IN "
+            "(SELECT id FROM messages ORDER BY id DESC LIMIT ?)", (keep,))
 
 
 def clear_messages() -> None:

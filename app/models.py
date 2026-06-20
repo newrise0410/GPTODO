@@ -61,14 +61,12 @@ class Item:
 def coerce_item(raw: dict[str, Any]) -> Item:
     """LLM이 준 dict를 안전하게 Item으로 변환(잘못된 값은 버리고 None 처리)."""
     def pick(key: str, allowed: list[str] | None = None) -> Any:
-        v = raw.get(key)
-        if isinstance(v, str):
-            v = v.strip() or None
+        v = _as_str(raw.get(key))           # 리스트/숫자 등도 문자열로 정규화
         if allowed and v not in allowed:
             return None
         return v
 
-    title = (raw.get("title") or "").strip()
+    title = _as_str(raw.get("title")) or ""
     kind = pick("kind", ["event", "todo"]) or "todo"
     date = pick("date")
     if date and not timeutil.parse_date(date):  # 형식 틀리면 날짜 미정
@@ -90,6 +88,18 @@ def coerce_item(raw: dict[str, Any]) -> Item:
         needs_review=bool(raw.get("needs_review")),
         review_reason=pick("review_reason"),
     )
+
+
+def _as_str(v: Any) -> str | None:
+    """문자열로 정규화. 리스트는 ', '로 합치고, None/빈값은 None."""
+    if v is None:
+        return None
+    if isinstance(v, list):
+        v = ", ".join(str(x) for x in v if x is not None)
+    elif not isinstance(v, str):
+        v = str(v)
+    v = v.strip()
+    return v or None
 
 
 def _valid_time(t: Any) -> bool:

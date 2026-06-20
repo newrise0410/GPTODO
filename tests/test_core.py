@@ -81,6 +81,20 @@ def test_invalid_values_coerced():
     assert it.date is None and it.time is None and it.category is None
 
 
+def test_list_valued_fields_coerced():
+    # LLM이 people/location 등을 리스트로 줘도 저장이 깨지지 않아야 한다(회귀)
+    apply_operations([{"op": "add", "item": {
+        "title": "회의", "kind": "event", "date": _d(0), "time": "10:00",
+        "people": ["김대리", "박과장"], "location": ["3층", "회의실"],
+    }}])
+    it = store.all_items()[0]
+    assert it.people == "김대리, 박과장"
+    assert it.location == "3층, 회의실"
+    # update도 리스트 방어
+    apply_operations([{"op": "update", "id": it.id, "changes": {"people": ["최부장"]}}])
+    assert store.all_items()[0].people == "최부장"
+
+
 def test_menu_routing_no_llm():
     apply_operations([{"op": "add", "item": {"title": "할일", "kind": "todo"}}])
     assert menu.is_menu("📊 대시보드")

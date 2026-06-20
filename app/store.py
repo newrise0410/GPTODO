@@ -53,6 +53,15 @@ def init() -> None:
         conn.executescript(SCHEMA)
 
 
+def _scalar(v):
+    """SQLite가 바인딩할 수 있는 스칼라로 강제(리스트/딕셔너리 방어)."""
+    if isinstance(v, (str, int, float, bytes)) or v is None:
+        return v
+    if isinstance(v, list):
+        return ", ".join(str(x) for x in v if x is not None) or None
+    return str(v)
+
+
 def add(item: Item) -> int:
     row = item.to_row()
     cols = ", ".join(_COLS)
@@ -60,7 +69,7 @@ def add(item: Item) -> int:
     with _conn() as conn:
         cur = conn.execute(
             f"INSERT INTO items ({cols}) VALUES ({ph})",
-            [row[c] for c in _COLS],
+            [_scalar(row[c]) for c in _COLS],
         )
         return int(cur.lastrowid)
 
@@ -73,7 +82,8 @@ def update(item_id: int, changes: dict) -> None:
         return
     sets = ", ".join(f"{k} = ?" for k in fields)
     with _conn() as conn:
-        conn.execute(f"UPDATE items SET {sets} WHERE id = ?", [*fields.values(), item_id])
+        conn.execute(f"UPDATE items SET {sets} WHERE id = ?",
+                     [*(_scalar(v) for v in fields.values()), item_id])
 
 
 def set_status(item_id: int, status: str) -> None:

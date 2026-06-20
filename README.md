@@ -1,99 +1,202 @@
-# GPTODO
+# 🧠 GPTODO
 
-아무렇게나 적어도 LLM이 **캘린더 중심**으로 정리해주는 채팅 웹앱.
-일정·할 일·메모·아이디어를 구조화하고, 빠른 메뉴로 다양한 보기(오늘/이번 주/분류/프로젝트/대시보드)로 재구성한다.
+> 아무렇게나 적어도 **캘린더 중심으로 정리해주는** 채팅형 할 일 앱.
 
-LLM 백엔드 선택 우선순위는 코드 기준으로 **`OPENAI_API_KEY`가 설정돼 있으면 그것**, 없으면
-**Codex / ChatGPT OAuth**(`codex login`)다. 즉 평소엔 `codex login`만 해두면 OAuth로 동작하고,
-API 키를 쓰고 싶을 때 env로 켜면 그쪽이 우선한다. (`app/llm/client.py:complete`)
+머릿속에 떠오르는 대로 던지면, GPTODO가 일정·할 일·메모·아이디어로 나눠서
+캘린더처럼 보기 좋게 정리해줍니다. 형식 맞출 필요 없이 그냥 말하듯 적으세요.
 
-> - **추출 프롬프트(실사용)**: `app/llm/extract.py`의 `_RULES` — 문장→연산 JSON 변환 규칙.
-> - **제품 동작 명세(참조)**: `app/prompts/organizer.md` — 원본 GPT 사양. 보기/메뉴/우선순위 규칙은
->   대부분 코드(`views.py`/`menu.py`)로 구현돼 있어 런타임에 프롬프트로 주입되지 않는다.
-> - KST 현재 날짜는 **서버에서 계산해 추출 프롬프트에 주입**하므로 LLM이 날짜를 추측하지 않는다.
+```
+나:  내일 3시 면접 보고, 저녁에 장보기, 금요일까지 보고서도 써야 해
 
-## 아키텍처 (하이브리드)
+GPTODO:
+  내일 일정과 할 일로 정리했어요.
 
-| 레이어 | 담당 | 누가 |
+  📅 6월 21일 일요일 · 내일
+     15:00  🟠 면접
+     🕒 시간 미정
+     ○ 장보기
+  📝 날짜 미정
+     ○ 보고서 작성  📌 6월 26일까지
+```
+
+마지막엔 항상 **빠른 메뉴**가 떠서, 클릭 한 번으로 *오늘 / 이번 주 / 대시보드 / 분류 / 프로젝트* 등
+원하는 관점으로 다시 볼 수 있어요.
+
+---
+
+## ✨ 특징
+
+- 🗣 **자연어로 입력** — "다음 주 화요일 10시 치과", "매주 월요일 9시 팀회의" 처럼 말하듯 적으면 됩니다.
+- 📆 **캘린더 중심 정리** — 일정/할 일 구분, 시간·날짜 미정 분리, 마감일, 우선순위, 카테고리 자동 정리.
+- 🔁 **반복 일정** — 매일 / 평일 / 주말 / 매주 요일 / 매월 N일 / 격주 / 첫째·마지막 주 / 매년 지원.
+- ⚠️ **충돌 감지** — 같은 시간대 일정이 겹치면 알려줍니다.
+- ✅ **직접 조작** — 클릭으로 완료·되살리기, 제목 인라인 수정, 삭제.
+- 📅 **캘린더 연동** — 애플/구글 캘린더에 구독(자동) + 구글 **양방향 동기화**.
+- 💾 **전부 로컬 저장** — 할 일·대화 기록·설정 모두 내 컴퓨터에만. 새로고침·재시작해도 그대로.
+- 🌗 **라이트/다크 테마**, 응답이 실시간으로 타이핑되는 **스트리밍 UI**.
+- 🔌 **LLM 자유 선택** — ChatGPT(Codex OAuth) / OpenAI API / **로컬 모델(Ollama)** 중 무엇이든.
+
+---
+
+## 🚀 시작하기
+
+필요한 것: [uv](https://docs.astral.sh/uv/) (파이썬 패키지 매니저)
+
+```bash
+git clone https://github.com/newrise0410/GPTODO
+cd GPTODO
+uv sync
+```
+
+**LLM 백엔드 하나를 고르세요** (아무 설정 없이도 셋 중 하나면 됩니다):
+
+```bash
+# A) ChatGPT 계정으로 (Codex CLI 로그인) — 가장 간단
+codex login
+
+# B) OpenAI API 키로
+export OPENAI_API_KEY=sk-...
+
+# C) 로컬 모델로 (Ollama, 인터넷·비용 없음)
+#    ollama pull gemma3:12b  먼저
+export LLM_BASE_URL=http://localhost:11434/v1
+export LLM_MODEL=gemma3:12b
+```
+
+실행:
+
+```bash
+uv run uvicorn app.main:app --reload
+# 브라우저에서 http://127.0.0.1:8000
+```
+
+---
+
+## 💬 사용법
+
+**그냥 적으세요.** 한 문장에 여러 개가 있어도 알아서 나눕니다.
+
+| 이렇게 적으면 | 이렇게 됩니다 |
+|---|---|
+| `내일 3시 면접` | 6/21 일요일 15:00 일정 |
+| `금요일까지 세금신고, 1시간쯤 걸려` | 마감 6/26, 예상 1시간 할 일 |
+| `매주 월요일 9시 팀회의` | 매주 반복 일정 |
+| `장보기 했어` | 장보기 완료 처리 |
+| `면접 4시로 바꿔줘` | 시간 수정 |
+
+**빠른 메뉴** — 응답 아래 버튼을 누르면 LLM 없이 즉시 보기를 바꿉니다.
+`☀️ 오늘` `📅 이번 주` `📊 대시보드` `🗂 분류` `📁 프로젝트` `⏰ 마감 임박` …
+또는 `표로` `체크리스트로` `요약해서` 처럼 말로도 됩니다.
+
+**직접 조작** — 항목에 마우스를 올리면:
+- `○ / ✓` 클릭 → 완료 / 되살리기
+- 제목 클릭 → 그 자리에서 수정
+- `✕` → 삭제
+
+대화 기록과 할 일은 자동 저장돼서 **껐다 켜도 그대로**예요. (🗑 버튼으로 대화만 비울 수 있어요.)
+
+---
+
+## 📅 캘린더 연동
+
+### 1) 구독으로 보기 (애플 · 구글, 설정 없음)
+
+헤더의 **📅** 버튼을 누르면 구독 URL을 복사해줍니다. 한 번 구독하면 GPTODO 일정이
+캘린더에 **자동으로 나타나고 갱신**돼요 (단방향).
+
+- **애플 캘린더**: 파일 → 새로운 캘린더 구독 → URL 붙여넣기
+- **구글 캘린더**: 다른 캘린더 `+` → URL로 추가 → 붙여넣기
+
+일정별로 **구글에 바로 추가(G)** / **.ics 다운로드(↓ics)** 버튼도 있습니다.
+
+### 2) 구글 양방향 동기화 (선택)
+
+구글 캘린더에서 고친 것도 GPTODO로 가져오고 싶다면 헤더의 **🔄** 버튼을 쓰세요.
+처음 한 번만 구글 OAuth 클라이언트를 만들면 됩니다:
+
+1. [Google Cloud Console](https://console.cloud.google.com/) → **사용자 인증 정보** → OAuth 클라이언트 ID 만들기
+2. 유형은 **"데스크톱 앱"** (리디렉션 URI 등록이 필요 없어요)
+3. **Google Calendar API** 사용 설정
+4. GPTODO에서 🔄 → 뜨는 입력칸에 **Client ID / Secret 붙여넣기** → **구글 로그인 → 허용**
+
+이후엔 🔄 한 번으로 동기화됩니다. (자격증명은 내 컴퓨터에만 저장돼요.)
+
+> 처음 로그인 때 "확인되지 않은 앱" 경고가 뜨면, 본인이 만든 개인 클라이언트라서 그런 거예요. *고급 → 계속*으로 넘어가면 됩니다.
+
+---
+
+## 🧠 어떻게 동작하나 — 하이브리드 구조
+
+GPTODO의 핵심은 **"LLM은 이해만, 계산은 코드가"** 입니다.
+
+| 레이어 | 하는 일 | 담당 |
 |---|---|---|
-| 추출 | 자유 문장 → 구조화된 연산(add/complete/update/delete) + 항목 속성 | LLM (`llm/extract.py`) |
-| 상태(SoT) | 항목 저장, 날짜 환산, 충돌 감지, 정렬, 보기 필터 | 코드 (`store.py`, `views.py`, `timeutil.py`) |
-| 보기/메뉴 | 캘린더·분류·프로젝트·대시보드·확인 보기, 고정 빠른 메뉴 | 코드 (`views.py`, `menu.py`) — **LLM 미사용** |
+| **추출** | 자유 문장 → 구조화된 항목/연산 | LLM |
+| **계산·저장** | 날짜 환산, 충돌 감지, 정렬, 보기 필터, 영속화 | 코드 |
+| **보기·메뉴** | 캘린더·분류·대시보드 렌더, 빠른 메뉴 | 코드 (LLM 안 씀) |
 
-→ 메뉴/보기 전환은 LLM을 안 거치므로 **즉시·무료·일관**. 날짜·충돌은 코드라 **정확**. 항목은 SQLite로 **영속**.
+덕분에:
+
+- 🎯 **날짜가 정확** — "금요일"·"다음 주 화요일"을 LLM이 계산하지 않고 **코드가 KST 기준으로 환산**(`dateresolve.py`). 그래서 작은 로컬 모델을 써도 날짜는 틀리지 않아요.
+- ⚡ **보기 전환이 즉시·무료** — 메뉴 클릭은 LLM을 안 거칩니다.
+- 🧩 **깨지지 않음** — 모델이 약해도 정리 품질만 떨어질 뿐, 캘린더·충돌·반복은 항상 정확합니다.
+
+---
+
+## 🔌 LLM 백엔드
+
+| 방식 | 설정 | 추천 |
+|---|---|---|
+| **Codex (ChatGPT OAuth)** | `codex login` | 간편, 품질 좋음 |
+| **OpenAI API** | `OPENAI_API_KEY` | API 키가 있으면 |
+| **로컬 (Ollama 등)** | `LLM_BASE_URL` + `LLM_MODEL` | 인터넷·비용 없이. `gemma3:12b` / `qwen3:14b` 권장 (4B급 소형은 날짜·반복 추론이 약함) |
+
+우선순위: `OPENAI_API_KEY` 또는 `LLM_BASE_URL`이 있으면 그쪽, 없으면 Codex OAuth.
+
+---
+
+## 🗂 프로젝트 구조
 
 ```
 app/
-  main.py        /api/chat(JSON) + /api/chat/stream(SSE) + /api/view + /api/items/{id}/toggle
-  timeutil.py    KST 날짜 유틸 (단일 출처)
-  models.py      Item 모델 + LLM dict→Item 안전 변환(coerce_item/coerce_changes)
-  store.py       SQLite 저장소 (진실의 원천) — 단일 트랜잭션 apply_batch, WAL
-  views.py       결정론적 보기 렌더러 + 충돌 감지(§16) + 반복 일정 펼침
-  recurrence.py  반복 규칙 파서(매일/평일/주말/매주 요일/매월 N일) → occurrence 생성
-  menu.py        빠른 메뉴 라벨 → 보기 함수 라우팅
-  llm/
-    codex_oauth.py  ~/.codex/auth.json 읽기 + access_token 자동 갱신
-    client.py       Codex Responses(SSE) complete/complete_stream / OPENAI_API_KEY 폴백
-    extract.py      문장→연산 추출(stream: note 실시간) + 스토어 적용
-  prompts/organizer.md  제품 동작 명세(참조용)
-  templates/index.html, static/{app.js,style.css}  채팅 + 고정 빠른 메뉴
+  main.py          FastAPI 엔드포인트 (채팅·SSE·보기·항목·캘린더·동기화)
+  store.py         SQLite 저장소 — 진실의 원천(항목·대화·매핑)
+  models.py        Item 모델 + LLM 출력 안전 변환
+  timeutil.py      KST 날짜 유틸
+  dateresolve.py   한국어 상대·요일 날짜 → 실제 날짜
+  recurrence.py    반복 규칙 파서 → 날짜 펼침
+  views.py         보기 렌더러 + 충돌 감지
+  menu.py          빠른 메뉴 / 별칭 라우팅
+  icalfeed.py      .ics 구독 피드 + 구글 추가 링크
+  gcal.py          구글 OAuth + Calendar REST
+  sync.py          구글 양방향 동기화 엔진
+  profile.py       사용자 프로필
+  llm/             추출(extract)·Codex/OpenAI 클라이언트
+  prompts/organizer.md   제품 동작 명세(참조)
+  templates/ static/     채팅 UI
+tests/             테스트
 ```
 
-- **스트리밍**: 추출 프롬프트는 `친근한 수신확인 + ===JSON=== + JSON`을 출력한다. 서버는 모델 델타를
-  스트리밍하며 수신확인 부분만 `note` 이벤트로 흘려보내고, JSON을 파싱·적용한 뒤 `view` 이벤트로 보드를 보낸다.
+---
 
-- 빠른 메뉴 버튼(☀️ 오늘 / 📊 대시보드 / 🔄 날짜 갱신 …)을 누르면 그 라벨이 사용자 입력으로 전송되고, 서버가 LLM 없이 해당 보기를 렌더한다.
-- KST 현재 날짜는 서버에서 계산해 LLM 지시문에 주입한다(날짜 추측 방지).
-- **날짜 리졸버**(`dateresolve.py`): LLM은 원문 표현("금요일","다음 주 화요일","이번 달 말")만 뽑고,
-  실제 날짜 계산은 코드가 KST 기준으로 한다 → 소형 로컬 모델도 요일·상대날짜가 정확하다.
-- **UI**: 서버는 구조화된 view(JSON: 섹션+항목)를 내려주고, 프런트가 그룹을 **톤별 카드**로 렌더한다
-  (날짜/날짜미정/반복/충돌/중요/마감 등 색상 구분). 헤더의 ◐ 버튼으로 **라이트/다크 토글**(localStorage 저장).
-- **캘린더 연동**(`icalfeed.py`): `/calendar.ics` 구독 피드로 애플·구글 캘린더에 **URL 구독**(단방향 자동 동기화).
-  일정별 **구글 추가 링크 / .ics 다운로드** 버튼도 제공. 일정·마감이 date·time 비면 '캘린더 정보 필요'로 질문.
-  - 애플: 파일 → 새로운 캘린더 구독 → `http://<host>/calendar.ics`
-  - 구글: 다른 캘린더 + → URL로 추가 → 같은 주소
-- **구글 양방향 동기화**(`gcal.py`/`sync.py`): 헤더 🔄 버튼 → OAuth 연결 후 수동 동기화.
-  로컬→구글(올림: 생성/수정/완료제거/삭제) + 구글→로컬(받음: 신규/수정/취소)을 전용 'GPTODO' 캘린더로.
-  매핑은 `items.google_event_id` + `extendedProperties.gptodo_id`, 삭제 전파는 tombstone.
-  - 전제: Google Cloud OAuth 클라이언트 생성 → `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` 설정
-  - 리디렉션 URI: `http://localhost:8000/oauth/google/callback`
+## 🔒 데이터 & 프라이버시
 
-## 실행
+- 할 일, 대화 기록, 프로필, 구글 자격증명 — **전부 내 컴퓨터의 `data/` 폴더에만** 저장됩니다.
+- `data/`와 `.env`는 `.gitignore` 처리되어 **GitHub에 절대 올라가지 않습니다.**
+- 백업하려면 `data/` 폴더만 복사하세요. (이 폴더가 사라지면 일정·연동이 초기화됩니다.)
+
+---
+
+## 🛠 개발
 
 ```bash
-cd ~/projects/LLM_TO_DO
-uv sync
-
-# LLM 인증 — 둘 중 하나
-codex login                     # 권장: ChatGPT OAuth → ~/.codex/auth.json
-# 또는
-export OPENAI_API_KEY=sk-...
-
-uv run uvicorn app.main:app --reload
-# http://127.0.0.1:8000
+uv run pytest          # 테스트
+uv run ruff check app  # 린트
 ```
 
-## Codex OAuth 실연결 메모 (실측)
+핵심 로직(날짜·반복·충돌·동기화)은 LLM 없이 결정론적이라 **단위 테스트로 검증**됩니다.
 
-ChatGPT 계정 백엔드(`https://chatgpt.com/backend-api/codex/responses`)는 표준
-`chat/completions`가 아니라 **스트리밍 Responses API**만 받는다. 동작에 필요했던 조건:
+---
 
-- 헤더 `originator: codex_cli_rs` — **없으면 모든 모델이 "not supported"로 거부됨** (핵심)
-- 헤더 `chatgpt-account-id`
-- body: `instructions`(시스템), `store=false`, `stream=true`
-- `input` content type: user→`input_text`, assistant→`output_text`
-- SSE의 `response.output_text.delta`를 모아 본문 구성
-- 지원 모델: `gpt-5.4-mini`(기본) / `gpt-5.4` / `gpt-5.5` (계정 플랜에 따라 다를 수 있음)
-
-`~/.codex/auth.json`의 `access_token`을 읽어 쓰며, JWT `exp`가 임박하면 `refresh_token`으로
-자동 갱신 후 파일에 다시 저장한다. (`app/llm/client.py`, `codex_oauth.py`)
-
-## TODO (다음 단계)
-
-- [x] `codex login` 후 실제 LLM 호출 검증 — 완료(라이브 동작 확인)
-- [x] 응답 스트리밍을 프런트까지 전달 — `/api/chat/stream`(SSE), 수신 확인 문장 실시간 표시
-- [x] 반복 일정 인스턴스화(§15) — 매일/평일/주말/매주 요일/매월 N일을 기간 보기에서 펼침(`recurrence.py`)
-- [ ] 빠른 메뉴 응답의 마크다운(표/구분선) 렌더링
-- [ ] 프로젝트 분해(§12) — `parent_id`/`sort_order` 모델
-- [ ] 격주·첫째 주·마지막 N요일 등 고급 반복 규칙
-- [ ] 대화 세션 분리(현재 단일 전역 상태)
+만든 이야기: 원래 ChatGPT의 한 GPT(`app/prompts/organizer.md`)였던 "캘린더 정리사"를,
+실제로 쓸 수 있는 로컬 웹앱으로 옮긴 프로젝트입니다.

@@ -8,7 +8,7 @@ const sendBtn = document.getElementById("send");
 
 fetch("/api/today")
   .then((r) => r.json())
-  .then((d) => (document.getElementById("today").textContent = "📅 " + d.date_header))
+  .then((d) => (document.getElementById("today").textContent = d.date_header))
   .catch(() => {});
 
 function addBubble(role, text) {
@@ -64,9 +64,10 @@ form.addEventListener("submit", (e) => {
   send(input.value);
 });
 
-// 빠른 메뉴 클릭 → 라벨 텍스트를 그대로 전송(서버에서 메뉴로 인식)
+// 빠른 메뉴 클릭 → data-cmd(정식 라벨)를 전송. 표시 텍스트는 미니멀하게 분리.
 document.getElementById("menu").addEventListener("click", (e) => {
-  if (e.target.tagName === "BUTTON") send(e.target.textContent);
+  const btn = e.target.closest("button");
+  if (btn) send(btn.dataset.cmd || btn.textContent);
 });
 
 function autosize() {

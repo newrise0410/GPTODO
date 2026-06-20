@@ -3,40 +3,43 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>🧠 지능형 정리사</title>
+  <title>GPTODO</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <header>
-    <h1>🧠 지능형 정리사</h1>
+    <span class="brand">GPTODO</span>
     <span id="today" class="today"></span>
   </header>
 
   <main id="chat" class="chat">
-    <div class="msg assistant welcome">
-      <div class="bubble">아무렇게나 적어도 캘린더 중심으로 정리해드려요. 예) <em>"내일 3시 면접 보고 저녁에 장보기, 보고서도 써야 해"</em></div>
+    <div class="msg assistant">
+      <div class="bubble muted">아무렇게나 적어도 캘린더로 정리해드려요.<br>예) 내일 3시 면접, 저녁에 장보기, 보고서도 써야 해</div>
     </div>
   </main>
 
-  <!-- 빠른 메뉴 (프롬프트 §20) — 클릭 시 해당 라벨을 그대로 전송 -->
-  <section class="menu" id="menu">
-    <div class="menu-row"><span class="menu-tag">기간</span>
-      <button>☀️ 오늘</button><button>📅 이번 주</button><button>🗓 이번 달</button><button>📂 전체</button>
-    </div>
-    <div class="menu-row"><span class="menu-tag">보기</span>
-      <button>📆 캘린더</button><button>🗂 분류하기</button><button>📁 프로젝트</button><button>📊 대시보드</button>
-    </div>
-    <div class="menu-row"><span class="menu-tag">확인</span>
-      <button>⭐ 중요</button><button>⏰ 마감 임박</button><button>📝 날짜 미정</button><button>⚠️ 확인 필요</button>
-    </div>
-    <div class="menu-row"><span class="menu-tag">시스템</span>
-      <button>🔄 날짜 갱신</button>
-    </div>
-  </section>
+  <!-- 빠른 메뉴 (§20) — data-cmd가 서버로 전송되는 정식 라벨 -->
+  <nav class="menu" id="menu">
+    <button data-cmd="☀️ 오늘">오늘</button>
+    <button data-cmd="📅 이번 주">이번 주</button>
+    <button data-cmd="🗓 이번 달">이번 달</button>
+    <button data-cmd="📂 전체">전체</button>
+    <i></i>
+    <button data-cmd="🗂 분류하기">분류</button>
+    <button data-cmd="📁 프로젝트">프로젝트</button>
+    <button data-cmd="📊 대시보드">대시보드</button>
+    <i></i>
+    <button data-cmd="⭐ 중요">중요</button>
+    <button data-cmd="⏰ 마감 임박">마감 임박</button>
+    <button data-cmd="📝 날짜 미정">날짜 미정</button>
+    <button data-cmd="⚠️ 확인 필요">확인 필요</button>
+    <i></i>
+    <button data-cmd="🔄 날짜 갱신" class="ghost">날짜 갱신</button>
+  </nav>
 
   <form id="form" class="composer">
-    <textarea id="input" rows="1" placeholder="할 일·일정·메모를 자유롭게 입력…" autofocus></textarea>
-    <button type="submit" id="send">전송</button>
+    <textarea id="input" rows="1" placeholder="입력…" autofocus></textarea>
+    <button type="submit" id="send" aria-label="전송">↑</button>
   </form>
 
   <script src="/static/app.js"></script>

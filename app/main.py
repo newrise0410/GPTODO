@@ -1,4 +1,4 @@
-"""FastAPI 엔트리포인트 — 지능형 정리사 (하이브리드).
+"""FastAPI 엔트리포인트 — GPTODO (하이브리드).
 
 흐름:
   1) 입력이 빠른 메뉴 라벨이면 → LLM 없이 보기 렌더(즉시·무료·일관)
@@ -21,7 +21,7 @@ from .llm import CodexAuthError, apply_operations, extract
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="지능형 정리사")
+app = FastAPI(title="GPTODO")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 

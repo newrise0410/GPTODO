@@ -231,6 +231,20 @@ def google_callback(request: Request, code: str | None = None, error: str | None
                         "<script>setTimeout(()=>{location.href='/'},1200)</script>")
 
 
+class GoogleCreds(BaseModel):
+    client_id: str
+    client_secret: str
+
+
+@app.post("/api/google/credentials")
+def google_creds(body: GoogleCreds):
+    """앱에서 OAuth 클라이언트 자격증명 저장(env·재시작 없이)."""
+    if not body.client_id.strip() or not body.client_secret.strip():
+        raise HTTPException(status_code=400, detail="client_id/secret이 비었어요.")
+    gcal.save_credentials(body.client_id.strip(), body.client_secret.strip())
+    return {"ok": True}
+
+
 @app.get("/api/sync/status")
 def sync_status():
     return gcal.status()

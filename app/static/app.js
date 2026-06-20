@@ -65,17 +65,27 @@ document.getElementById("sync").addEventListener("click", async () => {
   const st = await fetch("/api/sync/status").then((r) => r.json()).catch(() => null);
   if (!st) return;
   if (!st.configured) {
-    alert(
-      "구글 양방향 연동 설정이 필요해요:\n\n" +
-      "1. Google Cloud Console에서 OAuth 클라이언트(데스크톱/웹) 생성\n" +
-      "2. 승인된 리디렉션 URI에 " + location.origin + "/oauth/google/callback 추가\n" +
-      "3. 서버 실행 시 환경변수 GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET 설정\n\n" +
-      "그 다음 다시 🔄 를 누르면 구글 로그인으로 연결됩니다."
-    );
+    if (!confirm(
+      "구글 연동은 한 번만 OAuth 클라이언트를 만들면 돼요(데스크톱 앱 유형, 리디렉션 등록 불필요).\n\n" +
+      "Google Cloud Console → API 및 서비스 → 사용자 인증 정보 →\n" +
+      "  '사용자 인증 정보 만들기' → OAuth 클라이언트 ID → 유형 '데스크톱 앱'\n" +
+      "그리고 'Google Calendar API'를 사용 설정.\n\n" +
+      "만든 client_id / secret을 이어서 붙여넣을게요. 계속할까요?"
+    )) return;
+    const cid = prompt("Client ID 붙여넣기 (xxxx.apps.googleusercontent.com):");
+    if (!cid) return;
+    const secret = prompt("Client secret 붙여넣기:");
+    if (!secret) return;
+    const r = await fetch("/api/google/credentials", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ client_id: cid.trim(), client_secret: secret.trim() }),
+    });
+    if (!r.ok) { alert("저장 실패"); return; }
+    location.href = "/oauth/google/start"; // 바로 구글 로그인
     return;
   }
   if (!st.authed) {
-    location.href = "/oauth/google/start"; // 구글 로그인으로
+    location.href = "/oauth/google/start"; // 구글 로그인 + 권한 허용
     return;
   }
   btn.classList.add("spin");

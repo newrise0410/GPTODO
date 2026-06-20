@@ -34,15 +34,23 @@ class NotAuthed(GCalError):
 # ---- 설정/토큰 ----
 
 def client_id() -> str | None:
-    return os.environ.get("GOOGLE_CLIENT_ID")
+    return os.environ.get("GOOGLE_CLIENT_ID") or _load().get("client_id")
 
 
 def client_secret() -> str | None:
-    return os.environ.get("GOOGLE_CLIENT_SECRET")
+    return os.environ.get("GOOGLE_CLIENT_SECRET") or _load().get("client_secret")
 
 
 def is_configured() -> bool:
     return bool(client_id() and client_secret())
+
+
+def save_credentials(cid: str, secret: str) -> None:
+    """앱 UI에서 받은 OAuth 클라이언트 자격증명을 토큰 파일에 저장(env 없이 사용)."""
+    tok = _load()
+    tok["client_id"] = cid
+    tok["client_secret"] = secret
+    _save(tok)
 
 
 def _load() -> dict:
@@ -95,7 +103,11 @@ def exchange_code(code: str, redirect_uri: str) -> None:
 
 
 def disconnect() -> None:
-    TOKEN_PATH.unlink(missing_ok=True)
+    """로그인 토큰만 해제(클라이언트 자격증명은 유지해 재연결을 쉽게)."""
+    tok = _load()
+    for k in ("refresh_token", "access_token", "expiry", "sync_token", "calendar_id"):
+        tok.pop(k, None)
+    _save(tok)
 
 
 # ---- 클라이언트 ----

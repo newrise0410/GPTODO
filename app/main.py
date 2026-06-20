@@ -10,14 +10,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import json
+
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from . import menu, store, timeutil, views
-from .llm import CodexAuthError, apply_operations, extract
+from .llm import CodexAuthError, apply_operations, extract, stream
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -46,10 +48,7 @@ def index(request: Request):
 
 @app.post("/api/chat")
 def api_chat(req: ChatRequest):
-    history = [{"role": m.role, "content": m.content}
-               for m in req.messages if m.role in ("user", "assistant")]
-    if not history or history[-1]["role"] != "user":
-        raise HTTPException(status_code=400, detail="마지막 메시지는 user여야 합니다.")
+    history = _validate(req)
     text = history[-1]["content"].strip()
 
     # 1) 빠른 메뉴 → 보기 전환 (LLM 미사용)
@@ -65,10 +64,57 @@ def api_chat(req: ChatRequest):
         raise HTTPException(status_code=502, detail=f"LLM 호출 실패: {e}") from e
 
     counts = apply_operations(result["operations"])
+    return {"view": _reply_view(result), "source": "llm", "counts": counts}
+
+
+def _reply_view(result: dict) -> dict:
+    """추출 결과를 적용한 뒤의 전체 캘린더 + 수신확인/질문 부착."""
     view = views.build_calendar(store.all_items(), scope="all")
     view["note"] = result["reply"] or None
     view["questions"] = result["questions"]
-    return {"view": view, "source": "llm", "counts": counts}
+    return view
+
+
+def _validate(req: ChatRequest) -> list[dict]:
+    history = [{"role": m.role, "content": m.content}
+               for m in req.messages if m.role in ("user", "assistant")]
+    if not history or history[-1]["role"] != "user":
+        raise HTTPException(status_code=400, detail="마지막 메시지는 user여야 합니다.")
+    return history
+
+
+def _sse(obj: dict) -> str:
+    return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+
+
+@app.post("/api/chat/stream")
+def api_chat_stream(req: ChatRequest):
+    """SSE 스트리밍: 수신 확인 문장을 실시간(note 이벤트)으로, 완료 시 view 이벤트로."""
+    history = _validate(req)
+    text = history[-1]["content"].strip()
+
+    def gen():
+        if menu.is_menu(text):
+            yield _sse({"type": "view", "view": menu.render(text)})
+            return
+        result = {"reply": "", "operations": [], "questions": []}
+        try:
+            for kind, payload in stream(history[-HISTORY_LIMIT:]):
+                if kind == "note":
+                    yield _sse({"type": "note", "text": payload})
+                else:
+                    result = payload
+        except CodexAuthError as e:
+            yield _sse({"type": "error", "detail": str(e)})
+            return
+        except Exception as e:  # noqa: BLE001
+            yield _sse({"type": "error", "detail": f"LLM 호출 실패: {e}"})
+            return
+        counts = apply_operations(result["operations"])
+        yield _sse({"type": "view", "view": _reply_view(result), "counts": counts})
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/view")

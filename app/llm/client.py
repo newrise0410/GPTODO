@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
 
 import httpx
 
@@ -30,7 +31,7 @@ APIKEY_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
 _TIMEOUT = httpx.Timeout(120.0, connect=15.0)
 
 
-def _codex_complete(instructions: str, history: list[dict]) -> str:
+def _codex_stream(instructions: str, history: list[dict]) -> Iterator[str]:
     creds = codex_oauth.get_credentials()
     headers = {
         "Authorization": f"Bearer {creds.access_token}",
@@ -57,8 +58,6 @@ def _codex_complete(instructions: str, history: list[dict]) -> str:
         "stream": True,
         "input": input_items,
     }
-
-    text = ""
     with httpx.stream("POST", CODEX_RESPONSES_URL, headers=headers, json=body, timeout=_TIMEOUT) as r:
         if r.status_code != 200:
             raise RuntimeError(f"Codex 응답 {r.status_code}: {r.read()[:200]!r}")
@@ -73,27 +72,29 @@ def _codex_complete(instructions: str, history: list[dict]) -> str:
             except json.JSONDecodeError:
                 continue
             if ev.get("type") == "response.output_text.delta":
-                text += ev.get("delta", "")
-    return text
+                yield ev.get("delta", "")
 
 
-def _apikey_complete(instructions: str, history: list[dict], json_mode: bool) -> str:
+def _apikey_stream(instructions: str, history: list[dict]) -> Iterator[str]:
     from openai import OpenAI
 
     client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
     messages = [{"role": "system", "content": instructions}, *history]
-    kwargs = {"model": APIKEY_MODEL, "messages": messages}
-    if json_mode:
-        kwargs["response_format"] = {"type": "json_object"}
-    resp = client.chat.completions.create(**kwargs)
-    return resp.choices[0].message.content or ""
+    stream = client.chat.completions.create(model=APIKEY_MODEL, messages=messages, stream=True)
+    for chunk in stream:
+        delta = chunk.choices[0].delta.content if chunk.choices else None
+        if delta:
+            yield delta
 
 
-def complete(instructions: str, history: list[dict], *, json_mode: bool = True) -> str:
-    """system instructions + 대화(history) → 모델 텍스트 응답.
-
-    history: [{"role": "user"|"assistant", "content": str}, ...]
-    """
+def complete_stream(instructions: str, history: list[dict]) -> Iterator[str]:
+    """모델 출력 텍스트 델타를 순차적으로 yield. Codex OAuth 우선, API 키 폴백."""
     if os.environ.get("OPENAI_API_KEY"):
-        return _apikey_complete(instructions, history, json_mode)
-    return _codex_complete(instructions, history)
+        yield from _apikey_stream(instructions, history)
+    else:
+        yield from _codex_stream(instructions, history)
+
+
+def complete(instructions: str, history: list[dict]) -> str:
+    """system instructions + 대화(history) → 전체 텍스트 응답(델타 합본)."""
+    return "".join(complete_stream(instructions, history))

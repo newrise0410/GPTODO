@@ -6,10 +6,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app import menu, store, timeutil, views
-from app.llm.extract import apply_operations
+from app import menu, recurrence, store, timeutil, views
+from app.llm.extract import _parse, apply_operations
 from app.main import app
-from app.models import coerce_changes, coerce_item
+from app.models import Item, coerce_changes, coerce_item
 
 
 @pytest.fixture(autouse=True)
@@ -177,6 +177,49 @@ def test_api_view_and_toggle(client):
     client.post(f"/api/items/{iid}/toggle")
     assert store.get(iid).status == "open"
     assert client.post("/api/items/99999/toggle").status_code == 404
+
+
+def test_recurrence_weekly_only_correct_weekday():
+    # '월요일'의 '요일' 속 '일'이 일요일로 오인되면 안 됨(파서 회귀)
+    item = Item(title="회의", kind="event", time="09:00", recurrence="매주 월요일")
+    mon, sun = dt.date(2026, 6, 15), dt.date(2026, 6, 21)
+    dates = {o.date for o in recurrence.occurrences(item, mon, sun)}
+    assert dates == {"2026-06-15"}  # 그 주의 월요일 하나만
+
+
+def test_recurrence_materialized_in_week_view():
+    apply_operations([{"op": "add", "item": {
+        "title": "스트레칭", "kind": "event", "time": "07:00", "recurrence": "매일"}}])
+    week = views.build_calendar(store.all_items(), "week")
+    # 이번 주 7일 모두에 인스턴스가 생기고, 가상 인스턴스라 id=None(토글 불가)
+    insts = [i for i in _all_items(week) if i["title"] == "스트레칭"]
+    assert len(insts) == 7
+    assert all(i["id"] is None for i in insts)
+    # 'all' 보기에서는 펼치지 않고 '반복 일정' 규칙으로만 남는다
+    all_view = views.build_calendar(store.all_items(), "all")
+    assert "recurring" in _tones(all_view)
+
+
+def test_parse_sentinel_format():
+    full = '내일 일정 정리했어요.\n===JSON===\n{"operations": [], "questions": ["시간도 정할까요?"]}'
+    out = _parse(full)
+    assert out["reply"] == "내일 일정 정리했어요."
+    assert out["questions"] == ["시간도 정할까요?"]
+
+
+def test_parse_fallback_without_sentinel():
+    # 센티넬 없이 옛 형식(JSON 안 reply)도 호환
+    out = _parse('{"reply": "정리했어요", "operations": []}')
+    assert out["reply"] == "정리했어요"
+
+
+def test_chat_stream_endpoint(client):
+    # 메뉴 경로는 LLM 없이 SSE로 즉시 view 이벤트를 보낸다
+    apply_operations([{"op": "add", "item": {"title": "운동"}}])
+    r = client.post("/api/chat/stream", json={"messages": [{"role": "user", "content": "📂 전체"}]})
+    assert r.status_code == 200
+    assert 'data:' in r.text and '"type": "view"' in r.text
+    assert "운동" in r.text
 
 
 def _zero():

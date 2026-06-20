@@ -10,7 +10,7 @@ import datetime as dt
 from collections import defaultdict
 from typing import Any
 
-from . import timeutil
+from . import recurrence, timeutil
 from .models import Item
 
 
@@ -77,12 +77,24 @@ def _sort_day(items: list[Item]) -> tuple[list[Item], list[Item]]:
     return timed, untimed
 
 
+def _scope_range(scope: str, ref: dt.date) -> tuple[dt.date, dt.date] | None:
+    if scope == "today":
+        return ref, ref
+    if scope == "week":
+        return timeutil.week_bounds(ref)
+    if scope == "month":
+        first = ref.replace(day=1)
+        nxt = (first + dt.timedelta(days=32)).replace(day=1)
+        return first, nxt - dt.timedelta(days=1)
+    return None  # 'all'은 무한 → 펼치지 않음
+
+
 def build_calendar(items: list[Item], scope: str = "all") -> dict[str, Any]:
     ref = timeutil.today()
     open_items = [i for i in items if i.status != "done"]
     dated = [i for i in open_items if i.date_obj and timeutil.in_scope(i.date_obj, scope, ref)]
     undated = [i for i in open_items if not i.date_obj and not i.recurrence]
-    recurring = [i for i in open_items if i.recurrence and not i.date_obj]
+    recurring = [i for i in open_items if i.recurrence]
 
     scope_label = {"today": "오늘", "week": "이번 주", "month": "이번 달", "all": "전체"}[scope]
     sections: list[dict] = []
@@ -90,6 +102,19 @@ def build_calendar(items: list[Item], scope: str = "all") -> dict[str, Any]:
     by_date: dict[dt.date, list[Item]] = defaultdict(list)
     for it in dated:
         by_date[it.date_obj].append(it)
+
+    # 반복 일정: 기간이 한정된 보기에서는 실제 날짜로 펼친다(§15).
+    rng = _scope_range(scope, ref)
+    leftover_recurring = recurring
+    if rng:
+        materialized: set[int] = set()
+        for r in recurring:
+            occ = recurrence.occurrences(r, rng[0], rng[1])
+            for v in occ:
+                by_date[v.date_obj].append(v)
+            if occ:
+                materialized.add(id(r))
+        leftover_recurring = [r for r in recurring if id(r) not in materialized]
 
     for d in sorted(by_date):
         tag = " · 오늘" if d == ref else (" · 내일" if d == ref + dt.timedelta(days=1) else "")
@@ -104,8 +129,8 @@ def build_calendar(items: list[Item], scope: str = "all") -> dict[str, Any]:
         rows = [_item_view(it) for it in sorted(undated, key=lambda i: i.rank)]
         sections.append(_section("날짜 미정", "nodate", items=rows))
 
-    if recurring:
-        rows = [_item_view(it) for it in recurring]
+    if leftover_recurring:
+        rows = [_item_view(it) for it in leftover_recurring]
         sections.append(_section("반복 일정", "recurring", items=rows))
 
     conflict = _conflict_section(open_items)

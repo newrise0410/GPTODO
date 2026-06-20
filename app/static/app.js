@@ -121,33 +121,67 @@ async function send(text) {
   autosize();
 
   const wrap = el("div", "msg assistant pending");
-  wrap.appendChild(el("div", "welcome", "정리하는 중…"));
+  const live = el("div", "welcome", "정리하는 중…");
+  wrap.appendChild(live);
   chatEl.appendChild(wrap);
   chatEl.scrollTop = chatEl.scrollHeight;
   setBusy(true);
 
   try {
-    const res = await fetch("/api/chat", {
+    const res = await fetch("/api/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages: history }),
     });
-    const data = await res.json();
-    wrap.innerHTML = "";
-    wrap.classList.remove("pending");
-    if (!res.ok) {
-      wrap.appendChild(el("div", "error", "⚠️ " + (data.detail || "오류가 발생했어요.")));
+    if (!res.ok || !res.body) {
+      const data = await res.json().catch(() => ({}));
+      finishError(wrap, "⚠️ " + (data.detail || "오류가 발생했어요."));
       return;
     }
-    wrap.appendChild(renderView(data.view));
-    history.push({ role: "assistant", content: assistantContext(data.view) });
+    await consumeSSE(res.body, (obj) => {
+      if (obj.type === "note") {
+        if (obj.text) live.textContent = obj.text;
+      } else if (obj.type === "error") {
+        finishError(wrap, "⚠️ " + (obj.detail || "오류가 발생했어요."));
+      } else if (obj.type === "view") {
+        wrap.innerHTML = "";
+        wrap.classList.remove("pending");
+        wrap.appendChild(renderView(obj.view));
+        history.push({ role: "assistant", content: assistantContext(obj.view) });
+      }
+      chatEl.scrollTop = chatEl.scrollHeight;
+    });
   } catch (e) {
-    wrap.innerHTML = "";
-    wrap.classList.remove("pending");
-    wrap.appendChild(el("div", "error", "⚠️ 네트워크 오류: " + e.message));
+    finishError(wrap, "⚠️ 네트워크 오류: " + e.message);
   } finally {
     setBusy(false);
     chatEl.scrollTop = chatEl.scrollHeight;
+  }
+}
+
+function finishError(wrap, msg) {
+  wrap.innerHTML = "";
+  wrap.classList.remove("pending");
+  wrap.appendChild(el("div", "error", msg));
+}
+
+// SSE(`data: {...}\n\n`)를 fetch 스트림에서 파싱
+async function consumeSSE(body, onEvent) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf("\n\n")) !== -1) {
+      const chunk = buf.slice(0, idx).trim();
+      buf = buf.slice(idx + 2);
+      if (chunk.startsWith("data:")) {
+        try { onEvent(JSON.parse(chunk.slice(5).trim())); } catch {}
+      }
+    }
   }
 }
 

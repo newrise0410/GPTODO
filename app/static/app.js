@@ -1,4 +1,4 @@
-// 대화 기록은 클라이언트가 보관(서버 무상태). '현재 대화 기준' 동작.
+// 대화 기록은 클라이언트가 보관. 상태(항목)는 서버 SQLite가 진실의 원천.
 const history = [];
 
 const chatEl = document.getElementById("chat");
@@ -6,7 +6,6 @@ const form = document.getElementById("form");
 const input = document.getElementById("input");
 const sendBtn = document.getElementById("send");
 
-// 오늘 날짜 헤더 표시
 fetch("/api/today")
   .then((r) => r.json())
   .then((d) => (document.getElementById("today").textContent = "📅 " + d.date_header))
@@ -65,12 +64,11 @@ form.addEventListener("submit", (e) => {
   send(input.value);
 });
 
-// 빠른 메뉴 클릭 → 라벨 텍스트를 그대로 전송
+// 빠른 메뉴 클릭 → 라벨 텍스트를 그대로 전송(서버에서 메뉴로 인식)
 document.getElementById("menu").addEventListener("click", (e) => {
   if (e.target.tagName === "BUTTON") send(e.target.textContent);
 });
 
-// Enter 전송 / Shift+Enter 줄바꿈, textarea 자동 높이
 function autosize() {
   input.style.height = "auto";
   input.style.height = Math.min(input.scrollHeight, 160) + "px";

@@ -1,7 +1,9 @@
-"""FastAPI 엔트리포인트 — 지능형 정리사 채팅 앱.
+"""FastAPI 엔트리포인트 — 지능형 정리사 (하이브리드).
 
-대화는 클라이언트가 보관하고 매 요청마다 history를 보낸다(서버 무상태).
-프롬프트 19번 규칙대로 외부 저장은 하지 않으며 '현재 대화 기준'으로 동작한다.
+흐름:
+  1) 입력이 빠른 메뉴 라벨이면 → LLM 없이 보기 렌더(즉시·무료·일관)
+  2) 그 외 자유 문장이면 → LLM 추출 → 상태에 연산 적용 → 캘린더 렌더
+상태(SoT)는 SQLite. 충돌·날짜·정렬은 전부 코드가 결정론적으로 처리.
 """
 
 from __future__ import annotations
@@ -14,13 +16,18 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from .llm import CodexAuthError, chat, date_header
+from . import menu, store, timeutil, views
+from .llm import CodexAuthError, apply_operations, extract
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="LLM 정리사")
+app = FastAPI(title="지능형 정리사")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+store.init()
+
+HISTORY_LIMIT = 8  # 추출에 넘길 최근 대화 수(토큰 절약)
 
 
 class Message(BaseModel):
@@ -39,23 +46,50 @@ def index(request: Request):
 
 @app.post("/api/chat")
 def api_chat(req: ChatRequest):
-    history = [{"role": m.role, "content": m.content} for m in req.messages]
-    # 사용자/어시스턴트 메시지만 전달(시스템 프롬프트는 서버에서 주입).
-    history = [m for m in history if m["role"] in ("user", "assistant")]
+    history = [{"role": m.role, "content": m.content}
+               for m in req.messages if m.role in ("user", "assistant")]
     if not history or history[-1]["role"] != "user":
         raise HTTPException(status_code=400, detail="마지막 메시지는 user여야 합니다.")
+    text = history[-1]["content"].strip()
+
+    # 1) 빠른 메뉴 → 보기 전환 (LLM 미사용)
+    if menu.is_menu(text):
+        return {"reply": menu.render(text), "source": "menu"}
+
+    # 2) 자유 문장 → LLM 추출 → 연산 적용
     try:
-        reply = chat(history)
+        result = extract(history[-HISTORY_LIMIT:])
     except CodexAuthError as e:
         raise HTTPException(status_code=401, detail=str(e)) from e
-    except Exception as e:  # noqa: BLE001 — 프런트에 원인 전달
+    except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"LLM 호출 실패: {e}") from e
-    return {"reply": reply}
+
+    counts = apply_operations(result["operations"])
+    reply = _compose(result["reply"], result["questions"], counts)
+    return {"reply": reply, "source": "llm", "counts": counts}
+
+
+def _compose(reply: str, questions: list[str], counts: dict) -> str:
+    """짧은 수신확인 + 갱신된 캘린더 + (필요 시) 확인 질문."""
+    parts = []
+    if reply:
+        parts.append(reply)
+    parts.append(views.render_calendar(store.all_items(), scope="all"))
+    if questions:
+        q = "\n".join(f"{i+1}. {q}" for i, q in enumerate(questions))
+        parts.append("❓ 확인이 필요해요\n" + q)
+    return "\n\n".join(parts)
 
 
 @app.get("/api/today")
 def api_today():
-    return {"date_header": date_header()}
+    return {"date_header": timeutil.header()}
+
+
+@app.post("/api/reset")
+def api_reset():
+    store.clear()
+    return {"ok": True}
 
 
 @app.get("/health")

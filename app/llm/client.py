@@ -75,10 +75,13 @@ def _codex_stream(instructions: str, history: list[dict]) -> Iterator[str]:
                 yield ev.get("delta", "")
 
 
-def _apikey_stream(instructions: str, history: list[dict]) -> Iterator[str]:
+def _openai_stream(instructions: str, history: list[dict]) -> Iterator[str]:
+    """OpenAI 호환 chat/completions(클라우드 또는 로컬: Ollama/LM Studio/MLX)."""
     from openai import OpenAI
 
-    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    base_url = os.environ.get("LLM_BASE_URL")  # 예: http://localhost:11434/v1 (Ollama)
+    api_key = os.environ.get("OPENAI_API_KEY") or "local"  # 로컬 서버는 키 무시
+    client = OpenAI(api_key=api_key, base_url=base_url or None)
     messages = [{"role": "system", "content": instructions}, *history]
     stream = client.chat.completions.create(model=APIKEY_MODEL, messages=messages, stream=True)
     for chunk in stream:
@@ -87,10 +90,18 @@ def _apikey_stream(instructions: str, history: list[dict]) -> Iterator[str]:
             yield delta
 
 
+def _use_openai_compatible() -> bool:
+    # OPENAI_API_KEY 또는 LLM_BASE_URL(로컬 서버)이 있으면 OpenAI 호환 경로 사용
+    return bool(os.environ.get("OPENAI_API_KEY") or os.environ.get("LLM_BASE_URL"))
+
+
 def complete_stream(instructions: str, history: list[dict]) -> Iterator[str]:
-    """모델 출력 텍스트 델타를 순차적으로 yield. Codex OAuth 우선, API 키 폴백."""
-    if os.environ.get("OPENAI_API_KEY"):
-        yield from _apikey_stream(instructions, history)
+    """모델 출력 텍스트 델타를 순차적으로 yield.
+
+    우선순위: OPENAI_API_KEY/LLM_BASE_URL(OpenAI 호환·로컬 포함) → Codex OAuth.
+    """
+    if _use_openai_compatible():
+        yield from _openai_stream(instructions, history)
     else:
         yield from _codex_stream(instructions, history)
 

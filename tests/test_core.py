@@ -390,6 +390,15 @@ def test_parse_rejects_bad_types():
     assert out["operations"] == [] and out["questions"] == []
 
 
+def test_parse_normalizes_local_model_artifacts():
+    # gemma의 SentencePiece 공백 '▁'와 ``` 코드펜스가 섞여도 파싱 성공
+    raw = ("안녕하세요! 정리할게요.\n```\n===JSON===\n{\n▁▁\"operations\": "
+           "[{\"op\": \"add\", \"item\": {\"title\": \"면접\"}}],\n▁▁\"questions\": []\n}\n```")
+    out = _parse(raw)
+    assert out["operations"] == [{"op": "add", "item": {"title": "면접"}}]
+    assert "```" not in out["reply"] and "▁" not in out["reply"]
+
+
 def test_decomposition_intra_batch_refs():
     # 같은 배치에서 상위+하위를 ref/parent_ref로 한 번에 분해(§12)
     apply_operations([

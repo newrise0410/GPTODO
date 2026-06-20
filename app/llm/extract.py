@@ -66,9 +66,14 @@ item/changes 속성:
 """
 
 
+def _normalize(text: str) -> str:
+    """로컬 모델 아티팩트 정규화 — 예: gemma의 SentencePiece 공백 '▁'(U+2581)→공백."""
+    return text.replace("▁", " ")
+
+
 def _loads(content: str) -> dict[str, Any] | None:
     """프로즈/코드펜스로 감싸인 경우까지 첫 JSON 객체를 파싱."""
-    content = content.strip()
+    content = _normalize(content).strip()
     try:
         return json.loads(content)
     except json.JSONDecodeError:
@@ -85,12 +90,15 @@ def _loads(content: str) -> dict[str, Any] | None:
 
 def _note_prefix(buf: str) -> str:
     """누적 버퍼에서 사용자에게 보여줄 수신 확인 부분(센티넬/JSON 이전)만 추출."""
+    buf = _normalize(buf)
     idx = buf.find(SENTINEL)
     head = buf if idx == -1 else buf[:idx]
     # 센티넬이 아직 안 왔지만 JSON이 시작되면 거기서 끊는다.
     brace = head.find("{")
     if brace != -1:
         head = head[:brace]
+    # 코드펜스(```), 잔여 백틱 정리
+    head = head.replace("```json", "").replace("```", "")
     return head.strip()
 
 

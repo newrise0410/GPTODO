@@ -71,7 +71,7 @@ def _conflict_section(items: list[Item]) -> dict | None:
 
 # ---------------------------------------------------------------- 캘린더(기본)
 
-def _sort_day(items: list[Item]) -> list[Item]:
+def _sort_day(items: list[Item]) -> tuple[list[Item], list[Item]]:
     timed = sorted((i for i in items if i.time), key=lambda i: i.time)
     untimed = sorted((i for i in items if not i.time), key=lambda i: i.rank)
     return timed, untimed
@@ -172,11 +172,12 @@ def build_dashboard(items: list[Item]) -> dict[str, Any]:
     today_n = sum(1 for i in open_items if i.date_obj == ref)
     week_n = sum(1 for i in open_items if timeutil.in_scope(i.date_obj, "week", ref))
     no_date = [i for i in open_items if not i.date_obj]
-    review = [i for i in open_items if i.needs_review] or detect_conflicts(open_items)
+    # 확인 필요 = needs_review 항목 + 충돌 그룹(둘을 따로 집계해 합산)
+    review_n = sum(1 for i in open_items if i.needs_review) + len(detect_conflicts(open_items))
 
     sections = [_section("요약", "summary", lines=[
         f"오늘 {today_n} · 이번 주 {week_n} · 날짜 미정 {len(no_date)}",
-        f"열린 항목 {len(open_items)} · 완료 {len(done)} · 확인 필요 {len(review)}",
+        f"열린 항목 {len(open_items)} · 완료 {len(done)} · 확인 필요 {review_n}",
     ])]
     soon = _due_soon_items(open_items, ref)
     if soon:

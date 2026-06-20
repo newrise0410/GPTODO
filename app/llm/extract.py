@@ -10,7 +10,7 @@ import json
 from typing import Any
 
 from .. import store, timeutil
-from ..models import CATEGORIES, Item, coerce_item
+from ..models import CATEGORIES, Item, coerce_changes, coerce_item
 from .client import complete
 
 _RULES = f"""너는 사용자의 한국어/영어 문장에서 일정·할 일·메모를 뽑아 구조화하는 추출기다.
@@ -103,48 +103,43 @@ def extract(history: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def apply_operations(operations: list[dict[str, Any]]) -> dict[str, int]:
-    """연산을 스토어에 적용. 적용 결과 카운트 반환."""
-    counts = {"added": 0, "completed": 0, "reopened": 0, "updated": 0, "deleted": 0}
-    for op in operations:
-        kind = op.get("op")
-        try:
-            if kind == "add" and op.get("item"):
-                item = coerce_item(op["item"])
-                if item.title:
-                    store.add(item)
-                    counts["added"] += 1
-            elif kind == "complete" and op.get("id") is not None:
-                store.set_status(int(op["id"]), "done")
-                counts["completed"] += 1
-            elif kind == "reopen" and op.get("id") is not None:
-                store.set_status(int(op["id"]), "open")
-                counts["reopened"] += 1
-            elif kind == "update" and op.get("id") is not None:
-                changes = _clean_changes(op.get("changes") or {})
-                if changes:
-                    store.update(int(op["id"]), changes)
-                    counts["updated"] += 1
-            elif kind == "delete" and op.get("id") is not None:
-                store.delete(int(op["id"]))
-                counts["deleted"] += 1
-        except (ValueError, TypeError):
-            continue
-    return counts
+def _as_id(v: Any) -> int | None:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
 
 
-_ALLOWED_CHANGES = {
-    "title", "kind", "date", "time", "category", "priority", "recurrence",
-    "project", "location", "people", "estimate_min", "needs_review", "review_reason",
-}
+def apply_operations(operations: Any) -> dict[str, int]:
+    """LLM 연산을 검증·정규화한 뒤 단일 트랜잭션으로 적용. rowcount 기반 카운트 반환.
 
-
-def _clean_changes(changes: dict[str, Any]) -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    for k, v in changes.items():
-        if k not in _ALLOWED_CHANGES:
-            continue
-        if k == "date" and v and not timeutil.parse_date(v):
-            continue
-        out[k] = v
-    return out
+    잘못된 op(문자열/누락 필드/없는 id 등)는 조용히 건너뛰며, 절대 예외를 던지지 않는다.
+    실제로 변경된 항목만 카운트된다(없는 id 완료/삭제는 0).
+    """
+    norm: list[tuple] = []
+    if isinstance(operations, list):
+        for op in operations:
+            if not isinstance(op, dict):
+                continue
+            kind = op.get("op")
+            if kind == "add":
+                item = op.get("item")
+                if isinstance(item, dict):
+                    it = coerce_item(item)
+                    if it.title:
+                        norm.append(("add", it))
+            elif kind in ("complete", "reopen", "delete", "update"):
+                iid = _as_id(op.get("id"))
+                if iid is None:
+                    continue
+                if kind == "complete":
+                    norm.append(("status", iid, "done"))
+                elif kind == "reopen":
+                    norm.append(("status", iid, "open"))
+                elif kind == "delete":
+                    norm.append(("delete", iid))
+                else:  # update
+                    changes = coerce_changes(op.get("changes") or {})
+                    if changes:
+                        norm.append(("update", iid, changes))
+    return store.apply_batch(norm)

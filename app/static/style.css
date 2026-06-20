@@ -103,12 +103,17 @@ header {
   padding: .2rem 0; font-size: .92rem;
 }
 .item.done .t { text-decoration: line-through; color: var(--faint); }
+.item .check {
+  color: var(--muted); cursor: pointer; width: 1.2rem; text-align: center;
+  flex: none; user-select: none;
+}
+.item .check:hover { color: var(--accent); }
+.item.done .check { color: var(--tone); }
 .item .time {
   font-variant-numeric: tabular-nums; color: var(--text);
   background: var(--surface-2); border-radius: 6px;
   padding: .05rem .35rem; font-size: .8rem; min-width: 3.1rem; text-align: center;
 }
-.item .mark { color: var(--faint); width: 3.1rem; text-align: center; }
 .item .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .dot.p-vhigh { background: #f0655e; }
 .dot.p-high  { background: #ef8a4c; }
@@ -131,6 +136,7 @@ header {
 .menu button:hover { color: var(--text); background: var(--surface); }
 .menu button.ghost { color: var(--faint); margin-left: auto; }
 .menu i { width: 1px; height: 12px; background: var(--border); margin: 0 .3rem; }
+.menu.disabled { opacity: .5; pointer-events: none; }
 
 /* ── composer ── */
 .composer { display: flex; align-items: flex-end; gap: .5rem; padding: .5rem .9rem 1rem; }

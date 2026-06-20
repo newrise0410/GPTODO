@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -84,10 +85,77 @@ def coerce_item(raw: dict[str, Any]) -> Item:
         project=pick("project"),
         location=pick("location"),
         people=pick("people"),
-        estimate_min=int(est) if isinstance(est, (int, float)) else None,
-        needs_review=bool(raw.get("needs_review")),
+        estimate_min=_as_int(est),
+        needs_review=_as_bool(raw.get("needs_review")),
         review_reason=pick("review_reason"),
     )
+
+
+# 부분 업데이트(changes) 검증 — coerce_item과 동일한 필드 규칙을 재사용.
+_TEXT_FIELDS = {"title", "recurrence", "project", "location", "people", "review_reason"}
+
+
+def coerce_changes(changes: dict[str, Any]) -> dict[str, Any]:
+    """LLM update changes를 필드별로 검증/정규화. 잘못된 값은 버린다."""
+    if not isinstance(changes, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for k, v in changes.items():
+        if k == "kind":
+            if v in ("event", "todo"):
+                out[k] = v
+        elif k == "date":
+            s = _as_str(v)
+            if v is None:
+                out[k] = None                  # 날짜 미정으로 비우기 허용
+            elif s and timeutil.parse_date(s):
+                out[k] = s
+        elif k == "time":
+            s = _as_str(v)
+            if v is None:
+                out[k] = None
+            elif s and _valid_time(s):
+                out[k] = s
+        elif k == "category":
+            if v in CATEGORIES or v is None:
+                out[k] = v
+        elif k == "priority":
+            if v in PRIORITY_RANK:
+                out[k] = v
+        elif k == "estimate_min":
+            n = _as_int(v)
+            if n is not None:
+                out[k] = n
+        elif k == "needs_review":
+            out[k] = _as_bool(v)
+        elif k == "title":
+            s = _as_str(v)
+            if s:                              # 제목은 빈 값으로 덮어쓰지 않음
+                out[k] = s
+        elif k in _TEXT_FIELDS:
+            out[k] = _as_str(v)                # None이면 해당 필드 비우기
+    return out
+
+
+def _as_int(v: Any) -> int | None:
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return int(v)
+    if isinstance(v, str):
+        m = re.search(r"-?\d+", v)
+        return int(m.group()) if m else None
+    return None
+
+
+def _as_bool(v: Any) -> bool:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return v != 0
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "1", "yes", "y", "t", "참", "응", "네")
+    return bool(v)
 
 
 def _as_str(v: Any) -> str | None:

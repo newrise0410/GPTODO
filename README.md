@@ -3,10 +3,14 @@
 아무렇게나 적어도 LLM이 **캘린더 중심**으로 정리해주는 채팅 웹앱.
 일정·할 일·메모·아이디어를 구조화하고, 빠른 메뉴로 다양한 보기(오늘/이번 주/분류/프로젝트/대시보드)로 재구성한다.
 
-LLM 백엔드는 **Codex / ChatGPT OAuth**(`codex login`)를 우선 사용하고, 없으면 `OPENAI_API_KEY`로 폴백한다.
+LLM 백엔드 선택 우선순위는 코드 기준으로 **`OPENAI_API_KEY`가 설정돼 있으면 그것**, 없으면
+**Codex / ChatGPT OAuth**(`codex login`)다. 즉 평소엔 `codex login`만 해두면 OAuth로 동작하고,
+API 키를 쓰고 싶을 때 env로 켜면 그쪽이 우선한다. (`app/llm/client.py:complete`)
 
-> 핵심 동작 규칙은 전부 `app/prompts/organizer.md` 시스템 프롬프트에 들어 있다.
-> KST 현재 날짜는 **서버에서 계산해 주입**하므로 LLM이 날짜를 추측하지 않는다.
+> - **추출 프롬프트(실사용)**: `app/llm/extract.py`의 `_RULES` — 문장→연산 JSON 변환 규칙.
+> - **제품 동작 명세(참조)**: `app/prompts/organizer.md` — 원본 GPT 사양. 보기/메뉴/우선순위 규칙은
+>   대부분 코드(`views.py`/`menu.py`)로 구현돼 있어 런타임에 프롬프트로 주입되지 않는다.
+> - KST 현재 날짜는 **서버에서 계산해 추출 프롬프트에 주입**하므로 LLM이 날짜를 추측하지 않는다.
 
 ## 아키텍처 (하이브리드)
 

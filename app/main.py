@@ -71,6 +71,22 @@ def api_chat(req: ChatRequest):
     return {"view": view, "source": "llm", "counts": counts}
 
 
+@app.get("/api/view")
+def api_view():
+    """초기 로드/새로고침용 — 저장된 항목의 전체 캘린더."""
+    return {"view": views.build_calendar(store.all_items(), scope="all")}
+
+
+@app.post("/api/items/{item_id}/toggle")
+def api_toggle(item_id: int):
+    """항목 완료/미완료 토글 후 갱신된 캘린더를 반환."""
+    it = store.get(item_id)
+    if it is None:
+        raise HTTPException(status_code=404, detail="항목을 찾을 수 없어요.")
+    store.set_status(item_id, "open" if it.status == "done" else "done")
+    return {"view": views.build_calendar(store.all_items(), scope="all")}
+
+
 @app.get("/api/today")
 def api_today():
     return {"date_header": timeutil.header()}

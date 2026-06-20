@@ -2,6 +2,8 @@
 
 프롬프트 §19: 외부 캘린더/DB 저장은 하지 않지만, 앱 내부 영속화로
 새로고침해도 '현재 정리된 항목'이 유지된다.
+
+쓰기는 single-connection 트랜잭션(`apply_batch`)으로 묶어 부분 적용/경합을 막는다.
 """
 
 from __future__ import annotations
@@ -43,8 +45,10 @@ _COLS = [
 
 def _conn() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=5.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 
@@ -62,48 +66,115 @@ def _scalar(v):
     return str(v)
 
 
-def add(item: Item) -> int:
+# ---- 단일 연산(내부, conn 공유) — rowcount 반환 ----
+
+def _add(conn: sqlite3.Connection, item: Item) -> int:
     row = item.to_row()
     cols = ", ".join(_COLS)
     ph = ", ".join("?" for _ in _COLS)
-    with _conn() as conn:
-        cur = conn.execute(
-            f"INSERT INTO items ({cols}) VALUES ({ph})",
-            [_scalar(row[c]) for c in _COLS],
-        )
-        return int(cur.lastrowid)
+    cur = conn.execute(f"INSERT INTO items ({cols}) VALUES ({ph})",
+                       [_scalar(row[c]) for c in _COLS])
+    return int(cur.lastrowid)
 
 
-def update(item_id: int, changes: dict) -> None:
+def _set_status(conn: sqlite3.Connection, item_id: int, status: str) -> int:
+    cur = conn.execute("UPDATE items SET status = ? WHERE id = ?", (status, item_id))
+    return cur.rowcount
+
+
+def _update(conn: sqlite3.Connection, item_id: int, changes: dict) -> int:
     fields = {k: v for k, v in changes.items() if k in _COLS}
     if "needs_review" in fields:
         fields["needs_review"] = int(bool(fields["needs_review"]))
     if not fields:
-        return
+        return 0
     sets = ", ".join(f"{k} = ?" for k in fields)
+    cur = conn.execute(f"UPDATE items SET {sets} WHERE id = ?",
+                       [*(_scalar(v) for v in fields.values()), item_id])
+    return cur.rowcount
+
+
+def _delete(conn: sqlite3.Connection, item_id: int) -> int:
+    cur = conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
+    return cur.rowcount
+
+
+# ---- 배치(트랜잭션) ----
+
+def apply_batch(ops: list[tuple]) -> dict[str, int]:
+    """정규화된 연산들을 단일 트랜잭션으로 적용. rowcount 기반 카운트 반환.
+
+    ops 항목 형식:
+      ("add", Item)
+      ("status", id, "done"|"open")
+      ("update", id, changes_dict)
+      ("delete", id)
+    개별 연산 실패는 건너뛰되(앱이 멈추지 않게), 전체는 한 번에 커밋한다.
+    """
+    counts = {"added": 0, "completed": 0, "reopened": 0, "updated": 0, "deleted": 0}
+    conn = _conn()
+    try:
+        with conn:  # 트랜잭션: 블록 정상 종료 시 commit, 예외 시 rollback
+            for op in ops:
+                try:
+                    kind = op[0]
+                    if kind == "add":
+                        _add(conn, op[1])
+                        counts["added"] += 1
+                    elif kind == "status":
+                        if _set_status(conn, op[1], op[2]):
+                            counts["completed" if op[2] == "done" else "reopened"] += 1
+                    elif kind == "update":
+                        if _update(conn, op[1], op[2]):
+                            counts["updated"] += 1
+                    elif kind == "delete":
+                        if _delete(conn, op[1]):
+                            counts["deleted"] += 1
+                except (ValueError, TypeError, sqlite3.Error):
+                    continue
+    finally:
+        conn.close()
+    return counts
+
+
+# ---- 단건 공개 API(편의) ----
+
+def add(item: Item) -> int:
     with _conn() as conn:
-        conn.execute(f"UPDATE items SET {sets} WHERE id = ?",
-                     [*(_scalar(v) for v in fields.values()), item_id])
+        return _add(conn, item)
 
 
-def set_status(item_id: int, status: str) -> None:
+def set_status(item_id: int, status: str) -> int:
     with _conn() as conn:
-        conn.execute("UPDATE items SET status = ? WHERE id = ?", (status, item_id))
+        return _set_status(conn, item_id, status)
 
 
-def delete(item_id: int) -> None:
+def update(item_id: int, changes: dict) -> int:
     with _conn() as conn:
-        conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
+        return _update(conn, item_id, changes)
 
+
+def delete(item_id: int) -> int:
+    with _conn() as conn:
+        return _delete(conn, item_id)
+
+
+# ---- 조회 ----
 
 def all_items(include_done: bool = True) -> list[Item]:
     q = "SELECT * FROM items"
     if not include_done:
         q += " WHERE status != 'done'"
-    q += " ORDER BY created_at"
+    q += " ORDER BY created_at, id"
     with _conn() as conn:
         rows = conn.execute(q).fetchall()
     return [Item.from_row(dict(r)) for r in rows]
+
+
+def get(item_id: int) -> Item | None:
+    with _conn() as conn:
+        row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+    return Item.from_row(dict(row)) if row else None
 
 
 def clear() -> None:

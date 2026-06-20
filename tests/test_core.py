@@ -4,9 +4,12 @@ import datetime as dt
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 from app import menu, store, timeutil, views
 from app.llm.extract import apply_operations
+from app.main import app
+from app.models import coerce_changes, coerce_item
 
 
 @pytest.fixture(autouse=True)
@@ -111,3 +114,75 @@ def test_priority_surfaced():
     }}])
     it = _all_items(views.build_calendar(store.all_items(), "today"))[0]
     assert it["priority"] == "very_high"
+
+
+# ───────── 회귀: Codex 리뷰 지적 사항 ─────────
+
+def test_malformed_operations_never_crash():
+    # 비-리스트 / 문자열 op / item 누락 / 잘못된 changes 모두 예외 없이 무시
+    assert apply_operations("not a list") == _zero()
+    assert apply_operations(["just a string", 123, None]) == _zero()
+    assert apply_operations([{"op": "add"}]) == _zero()              # item 없음
+    assert apply_operations([{"op": "add", "item": "x"}]) == _zero()  # item이 dict 아님
+    assert apply_operations([{"op": "update", "id": "abc"}]) == _zero()  # id 변환 불가
+
+
+def test_missing_id_not_counted():
+    counts = apply_operations([
+        {"op": "complete", "id": 999},
+        {"op": "delete", "id": 999},
+        {"op": "update", "id": 999, "changes": {"title": "x"}},
+    ])
+    assert counts == _zero()  # 실제 변경 0 → 카운트 0
+
+
+def test_real_change_counted():
+    apply_operations([{"op": "add", "item": {"title": "장보기"}}])
+    iid = store.all_items()[0].id
+    assert apply_operations([{"op": "complete", "id": iid}])["completed"] == 1
+    assert apply_operations([{"op": "reopen", "id": iid}])["reopened"] == 1
+    assert apply_operations([{"op": "delete", "id": iid}])["deleted"] == 1
+
+
+def test_bool_int_string_parsing():
+    it = coerce_item({"title": "x", "needs_review": "false", "estimate_min": "약 30분"})
+    assert it.needs_review is False        # "false"가 참으로 처리되던 버그
+    assert it.estimate_min == 30           # 문자열 숫자 파싱
+    assert coerce_item({"title": "y", "needs_review": "true"}).needs_review is True
+
+
+def test_update_field_validation():
+    changes = coerce_changes({"time": "99:99", "date": "내일", "priority": "high", "bogus": 1})
+    assert "time" not in changes and "date" not in changes  # 잘못된 값 제거
+    assert changes == {"priority": "high"}                  # 유효한 것만
+
+
+def test_dashboard_counts_review_and_conflict():
+    apply_operations([
+        {"op": "add", "item": {"title": "모호", "needs_review": True, "review_reason": "날짜 미정"}},
+        {"op": "add", "item": {"title": "면접", "kind": "event", "date": _d(1), "time": "15:00"}},
+        {"op": "add", "item": {"title": "병원", "kind": "event", "date": _d(1), "time": "15:00"}},
+    ])
+    summary = views.build_dashboard(store.all_items())["sections"][0]["lines"][1]
+    assert "확인 필요 2" in summary  # needs_review 1 + 충돌 1
+
+
+def test_api_view_and_toggle(client):
+    apply_operations([{"op": "add", "item": {"title": "운동"}}])
+    iid = store.all_items()[0].id
+    v = client.get("/api/view").json()["view"]
+    assert "운동" in [i["title"] for i in _all_items(v)]
+    client.post(f"/api/items/{iid}/toggle")
+    assert store.get(iid).status == "done"
+    client.post(f"/api/items/{iid}/toggle")
+    assert store.get(iid).status == "open"
+    assert client.post("/api/items/99999/toggle").status_code == 404
+
+
+def _zero():
+    return {"added": 0, "completed": 0, "reopened": 0, "updated": 0, "deleted": 0}
+
+
+@pytest.fixture
+def client():
+    return TestClient(app)

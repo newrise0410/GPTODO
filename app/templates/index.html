@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LLM TO-DO</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <h1>🧠 LLM TO-DO</h1>
+    <p class="hint">자연어로 적으세요. 예: "내일까지 보고서 초안 쓰고, 다음주 월요일에 치과 예약"</p>
+
+    <form action="/add" method="post" class="add-form">
+      <input type="text" name="text" placeholder="할 일을 자연어로 입력…" autofocus required>
+      <button type="submit">추가</button>
+    </form>
+
+    <ul class="todos">
+      {% for t in todos %}
+      <li class="todo {{ 'done' if t.done else '' }} prio-{{ t.priority }}">
+        <form action="/todos/{{ t.id }}/toggle" method="post" class="inline">
+          <input type="hidden" name="done" value="{{ 'false' if t.done else 'true' }}">
+          <button type="submit" class="check">{{ '✓' if t.done else '○' }}</button>
+        </form>
+        <span class="title">{{ t.title }}</span>
+        {% if t.due %}<span class="due">📅 {{ t.due }}</span>{% endif %}
+        {% for tag in t.tags %}<span class="tag">#{{ tag }}</span>{% endfor %}
+        <span class="prio-badge">{{ t.priority }}</span>
+        <form action="/todos/{{ t.id }}/delete" method="post" class="inline right">
+          <button type="submit" class="del">✕</button>
+        </form>
+      </li>
+      {% else %}
+      <li class="empty">아직 할 일이 없습니다.</li>
+      {% endfor %}
+    </ul>
+  </main>
+</body>
+</html>

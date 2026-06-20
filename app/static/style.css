@@ -1,0 +1,52 @@
+:root {
+  --bg: #0f1115;
+  --card: #1a1d24;
+  --text: #e6e8eb;
+  --muted: #8b9099;
+  --accent: #6ea8fe;
+  --high: #ff6b6b;
+  --medium: #ffd166;
+  --low: #6bcb77;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font-family: -apple-system, "Apple SD Gothic Neo", system-ui, sans-serif;
+}
+main { max-width: 680px; margin: 0 auto; padding: 2.5rem 1.25rem; }
+h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+.hint { color: var(--muted); margin: 0 0 1.5rem; font-size: .9rem; }
+.add-form { display: flex; gap: .5rem; margin-bottom: 1.5rem; }
+.add-form input {
+  flex: 1; padding: .75rem 1rem; border-radius: 10px; border: 1px solid #2a2e38;
+  background: var(--card); color: var(--text); font-size: 1rem;
+}
+.add-form button, .add-form input:focus { outline: none; }
+.add-form button {
+  padding: .75rem 1.25rem; border: 0; border-radius: 10px; cursor: pointer;
+  background: var(--accent); color: #08111f; font-weight: 600;
+}
+.todos { list-style: none; padding: 0; margin: 0; }
+.todo {
+  display: flex; align-items: center; gap: .6rem; padding: .7rem .9rem;
+  background: var(--card); border-radius: 10px; margin-bottom: .5rem;
+  border-left: 3px solid var(--muted);
+}
+.todo.prio-high { border-left-color: var(--high); }
+.todo.prio-medium { border-left-color: var(--medium); }
+.todo.prio-low { border-left-color: var(--low); }
+.todo.done .title { text-decoration: line-through; color: var(--muted); }
+.todo .title { flex: 1; }
+.inline { margin: 0; display: inline; }
+.inline.right { margin-left: auto; }
+button.check, button.del {
+  background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 1.1rem;
+}
+button.del:hover { color: var(--high); }
+.due { font-size: .8rem; color: var(--accent); }
+.tag { font-size: .75rem; color: var(--muted); }
+.prio-badge {
+  font-size: .7rem; color: var(--muted); text-transform: uppercase;
+  border: 1px solid #2a2e38; padding: .1rem .4rem; border-radius: 6px;
+}
+.empty { color: var(--muted); text-align: center; padding: 2rem; }

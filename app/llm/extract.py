@@ -48,6 +48,8 @@ item/changes 속성:
 - priority: "very_high"|"high"|"medium"|"low"|null  (오늘마감/제출/시험/면접/계약=very_high, 내일·이번주마감/예약/병원=high)
 - recurrence: "매주 월요일"·"격주 수요일"·"매월 1일"·"마지막 금요일" 같은 반복 주기 또는 null
 - project: 큰 작업명 또는 null.  parent_id: 기존 상위 항목 id(분해 단계일 때).  sort_order: 단계 순서 정수
+- (분해) 같은 요청에서 상위+하위를 함께 만들 땐 상위 add에 "ref":"임의이름", 하위 add에 "parent_ref":"같은이름"·sort_order로 연결.
+  상위·하위 모두 같은 project 값을 둔다.
 - location, people: 있으면, 없으면 null
 - estimate_min: 예상 소요(분) 정수 또는 null
 - needs_review: 날짜/시간/대상이 모호하면 true
@@ -184,7 +186,10 @@ def apply_operations(operations: Any) -> dict[str, int]:
                 if isinstance(item, dict):
                     it = coerce_item(item)
                     if it.title:
-                        norm.append(("add", it))
+                        ref = (str(item.get("ref")).strip() or None) if item.get("ref") else None
+                        parent_ref = (str(item.get("parent_ref")).strip() or None
+                                      if item.get("parent_ref") else None)
+                        norm.append(("add", it, ref, parent_ref))
             elif kind == "set_profile":
                 if isinstance(op.get("profile"), dict):
                     profile.update(op["profile"])

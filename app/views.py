@@ -209,48 +209,61 @@ def build_categories(items: list[Item]) -> dict[str, Any]:
 # ---------------------------------------------------------------- 프로젝트(§12)
 
 def build_projects(items: list[Item]) -> dict[str, Any]:
+    """§12 — parent_id 트리를 전체 항목 기준으로 만들고, 루트 서브트리 단위로 프로젝트 그룹화.
+
+    상위에 project가 없고 하위에만 있어도(LLM이 그렇게 줄 때) 서브트리의 project로 묶는다.
+    """
     open_items = [i for i in items if i.status != "done"]
-    by_proj: dict[str, list[Item]] = defaultdict(list)
+    ids = {i.id for i in open_items}
+    children: dict[int, list[Item]] = defaultdict(list)
     for it in open_items:
-        by_proj[it.project or "(미지정)"].append(it)
+        if it.parent_id and it.parent_id in ids:
+            children[it.parent_id].append(it)
+    roots = [it for it in open_items if not (it.parent_id and it.parent_id in ids)]
+
+    def subtree_project(root: Item) -> str:
+        if root.project:
+            return root.project
+        for c in children.get(root.id, []):
+            if c.project:
+                return c.project
+        return "(미지정)"
+
+    by_proj: dict[str, list[Item]] = defaultdict(list)
+    for r in roots:
+        by_proj[subtree_project(r)].append(r)
+
+    seen: set[int] = set()  # 사이클/자기참조 방어
+
+    def rows_for(root_list: list[Item]) -> list[dict]:
+        rows: list[dict] = []
+
+        def emit(it: Item, depth: int) -> None:
+            if it.id in seen or depth > 10:
+                return
+            seen.add(it.id)
+            rows.append(_item_view(it, with_date=True, depth=depth))
+            for c in sorted(children.get(it.id, []), key=lambda i: (i.sort_order, i.id or 0)):
+                emit(c, depth + 1)
+
+        for it in sorted(root_list, key=lambda i: (i.sort_order, i.date or "9999", i.rank)):
+            emit(it, 0)
+        return rows
+
     sections = []
     named = {k: v for k, v in by_proj.items() if k != "(미지정)"}
-    for proj, group in sorted(named.items()):
-        sections.append(_section(proj, "project", items=_project_rows(group)))
+    for proj, root_list in sorted(named.items()):
+        sections.append(_section(proj, "project", items=rows_for(root_list)))
     if by_proj.get("(미지정)"):
-        sections.append(_section("그 외", "plain", items=_project_rows(by_proj["(미지정)"])))
+        sections.append(_section("그 외", "plain", items=rows_for(by_proj["(미지정)"])))
+    # 사이클 등으로 누락된 항목은 평면으로라도 노출(잃어버리지 않게)
+    orphans = [_item_view(i, with_date=True) for i in open_items if i.id not in seen]
+    if orphans:
+        sections.append(_section("그 외", "plain", items=orphans))
     if not named:
         sections.insert(0, _section("", "empty",
                         lines=["아직 프로젝트로 묶인 항목이 없어요. 큰 작업은 단계로 나눌 수 있어요."]))
     return _view("프로젝트별 정리", sections)
-
-
-def _project_rows(group: list[Item]) -> list[dict]:
-    """§12 상위→하위(parent_id) 트리를 sort_order 순으로 평탄화(depth 부여)."""
-    children: dict[int, list[Item]] = defaultdict(list)
-    ids = {i.id for i in group}
-    for it in group:
-        if it.parent_id and it.parent_id in ids:
-            children[it.parent_id].append(it)
-    rows: list[dict] = []
-    seen: set[int] = set()  # 사이클/자기참조 방어
-
-    def emit(it: Item, depth: int) -> None:
-        if it.id in seen or depth > 10:
-            return
-        seen.add(it.id)
-        rows.append(_item_view(it, with_date=True, depth=depth))
-        for c in sorted(children.get(it.id, []), key=lambda i: (i.sort_order, i.id or 0)):
-            emit(c, depth + 1)
-
-    roots = [it for it in group if not (it.parent_id and it.parent_id in ids)]
-    for it in sorted(roots, key=lambda i: (i.sort_order, i.date or "9999", i.rank)):
-        emit(it, 0)
-    # 사이클로 누락된 항목은 평면으로라도 노출(잃어버리지 않게)
-    for it in group:
-        if it.id not in seen:
-            rows.append(_item_view(it, with_date=True))
-    return rows
 
 
 # ---------------------------------------------------------------- 대시보드(§21,§22)
@@ -262,13 +275,30 @@ def _due_soon_items(items: list[Item], ref: dt.date, within: int = 2) -> list[It
     return sorted(res, key=lambda i: (str(i.due_obj), i.time or "99:99"))
 
 
+def _expand_in_range(items: list[Item], lo: dt.date, hi: dt.date) -> list[Item]:
+    """[lo, hi] 안의 실제 일정 + 반복 occurrence를 합쳐 반환(메모/완료 제외)."""
+    out: list[Item] = []
+    for it in items:
+        if it.status == "done" or _is_note(it):
+            continue
+        if it.recurrence:
+            out.extend(recurrence.occurrences(it, lo, hi))
+        elif it.date_obj and lo <= it.date_obj <= hi:
+            out.append(it)
+    return out
+
+
 def build_dashboard(items: list[Item]) -> dict[str, Any]:
     ref = timeutil.today()
     open_items = [i for i in items if i.status != "done"]
     done = [i for i in items if i.status == "done"]
-    today_n = sum(1 for i in open_items if i.date_obj == ref)
-    week_n = sum(1 for i in open_items if timeutil.in_scope(i.date_obj, "week", ref))
-    no_date = [i for i in open_items if not i.date_obj]
+    # 반복 occurrence까지 포함해 카운트(§21 수치 정확도)
+    today_n = len(_expand_in_range(items, ref, ref))
+    lo, hi = timeutil.week_bounds(ref)
+    week_n = len(_expand_in_range(items, lo, hi))
+    # 날짜 미정 = 날짜·마감·반복 어느 것도 없는 항목(반복/메모 제외)
+    no_date = [i for i in open_items
+               if not _is_note(i) and not i.date_obj and not i.deadline_obj and not i.recurrence]
     # 확인 필요 = needs_review 항목 + 충돌 그룹(둘을 따로 집계해 합산)
     review_n = sum(1 for i in open_items if i.needs_review) + len(detect_conflicts(open_items))
 

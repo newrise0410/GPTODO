@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 
 from .models import Item
@@ -133,13 +134,14 @@ def apply_batch(ops: list[tuple]) -> dict[str, int]:
     """정규화된 연산들을 단일 트랜잭션으로 적용. rowcount 기반 카운트 반환.
 
     ops 항목 형식:
-      ("add", Item)
+      ("add", Item, ref?, parent_ref?)   # ref/parent_ref로 같은 배치 내 부모-자식 연결(§12)
       ("status", id, "done"|"open")
       ("update", id, changes_dict)
       ("delete", id)
     개별 연산 실패는 건너뛰되(앱이 멈추지 않게), 전체는 한 번에 커밋한다.
     """
     counts = {"added": 0, "completed": 0, "reopened": 0, "updated": 0, "deleted": 0}
+    ref_to_id: dict[str, int] = {}  # 배치 내 임시 ref → 실제 id
     conn = _conn()
     try:
         with conn:  # 트랜잭션: 블록 정상 종료 시 commit, 예외 시 rollback
@@ -147,7 +149,14 @@ def apply_batch(ops: list[tuple]) -> dict[str, int]:
                 try:
                     kind = op[0]
                     if kind == "add":
-                        _add(conn, op[1])
+                        item = op[1]
+                        ref = op[2] if len(op) > 2 else None
+                        parent_ref = op[3] if len(op) > 3 else None
+                        if item.parent_id is None and parent_ref in ref_to_id:
+                            item = replace(item, parent_id=ref_to_id[parent_ref])
+                        new_id = _add(conn, item)
+                        if ref:
+                            ref_to_id[ref] = new_id
                         counts["added"] += 1
                     elif kind == "status":
                         if _set_status(conn, op[1], op[2]):

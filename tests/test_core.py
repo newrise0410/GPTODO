@@ -390,6 +390,32 @@ def test_parse_rejects_bad_types():
     assert out["operations"] == [] and out["questions"] == []
 
 
+def test_decomposition_intra_batch_refs():
+    # 같은 배치에서 상위+하위를 ref/parent_ref로 한 번에 분해(§12)
+    apply_operations([
+        {"op": "add", "item": {"title": "면접 준비", "project": "면접", "ref": "p"}},
+        {"op": "add", "item": {"title": "기업 조사", "project": "면접",
+                               "parent_ref": "p", "sort_order": 1}},
+        {"op": "add", "item": {"title": "예상 질문", "project": "면접",
+                               "parent_ref": "p", "sort_order": 2}},
+    ])
+    by_title = {i.title: i for i in store.all_items()}
+    pid = by_title["면접 준비"].id
+    assert by_title["기업 조사"].parent_id == pid
+    assert by_title["예상 질문"].parent_id == pid
+    depths = {r["title"]: r["depth"] for r in _all_items(views.build_projects(store.all_items()))}
+    assert depths["기업 조사"] == 1 and depths["예상 질문"] == 1
+
+
+def test_dashboard_counts_recurrence_occurrences():
+    apply_operations([{"op": "add", "item": {
+        "title": "스탠드업", "kind": "event", "time": "09:00", "recurrence": "매일"}}])
+    summary = views.build_dashboard(store.all_items())["sections"][0]["lines"][0]
+    assert "오늘 1" in summary       # 반복 항목이 오늘 1건으로 집계
+    assert "이번 주 7" in summary    # 이번 주 7건
+    assert "날짜 미정 0" in summary  # 반복은 '날짜 미정'에 포함되지 않음
+
+
 @pytest.fixture
 def client():
     return TestClient(app)

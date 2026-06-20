@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,12 +9,15 @@
 <body>
   <header>
     <span class="brand">GPTODO</span>
-    <span id="today" class="today"></span>
+    <span class="head-right">
+      <span id="today" class="today"></span>
+      <button id="theme" class="theme-btn" aria-label="테마 전환" title="라이트/다크 전환">◐</button>
+    </span>
   </header>
 
   <main id="chat" class="chat">
     <div class="msg assistant">
-      <div class="bubble muted">아무렇게나 적어도 캘린더로 정리해드려요.<br>예) 내일 3시 면접, 저녁에 장보기, 보고서도 써야 해</div>
+      <div class="welcome">아무렇게나 적어도 캘린더로 정리해드려요.<br>예) 내일 3시 면접, 저녁에 장보기, 보고서도 써야 해</div>
     </div>
   </main>
 

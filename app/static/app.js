@@ -6,34 +6,98 @@ const form = document.getElementById("form");
 const input = document.getElementById("input");
 const sendBtn = document.getElementById("send");
 
+// ── 테마(라이트/다크) ──
+const saved = localStorage.getItem("gptodo-theme");
+if (saved) document.documentElement.dataset.theme = saved;
+document.getElementById("theme").addEventListener("click", () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem("gptodo-theme", next);
+});
+
 fetch("/api/today")
   .then((r) => r.json())
   .then((d) => (document.getElementById("today").textContent = d.date_header))
   .catch(() => {});
 
-function addBubble(role, text) {
-  const wrap = document.createElement("div");
-  wrap.className = "msg " + role;
-  const bubble = document.createElement("div");
-  bubble.className = "bubble";
-  bubble.textContent = text; // pre-wrap CSS가 줄바꿈/공백 보존
-  wrap.appendChild(bubble);
+// ── 헬퍼 ──
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+
+function addUser(text) {
+  const wrap = el("div", "msg user");
+  wrap.appendChild(el("div", "chip", text));
   chatEl.appendChild(wrap);
   chatEl.scrollTop = chatEl.scrollHeight;
-  return bubble;
+}
+
+function priorityDot(p) {
+  if (p !== "very_high" && p !== "high") return null;
+  return el("span", "dot " + (p === "very_high" ? "p-vhigh" : "p-high"));
+}
+
+function itemRow(it) {
+  const row = el("div", "item" + (it.done ? " done" : ""));
+  // 좌측: 시간칩 또는 체크
+  if (it.time) row.appendChild(el("span", "time", it.time));
+  else row.appendChild(el("span", "mark", it.done ? "✓" : "○"));
+  const dot = priorityDot(it.priority);
+  if (dot) row.appendChild(dot);
+  // 제목
+  const title = el("span", "t");
+  title.textContent = (it.date ? it.date + "  " : "") + it.title;
+  row.appendChild(title);
+  // 배지
+  if (it.recurrence) row.appendChild(el("span", "badge", "🔁 " + it.recurrence));
+  if (it.location) row.appendChild(el("span", "badge", "@" + it.location));
+  if (it.note) row.appendChild(el("span", "note", it.note));
+  return row;
+}
+
+function section(sec) {
+  const card = el("div", "card tone-" + sec.tone);
+  if (sec.label) card.appendChild(el("div", "card-h", sec.label));
+  for (const line of sec.lines) card.appendChild(el("div", "line", line));
+  for (const it of sec.items) {
+    if (it.divider) card.appendChild(el("div", "divider", it.divider));
+    card.appendChild(itemRow(it));
+  }
+  return card;
+}
+
+function renderView(view) {
+  const box = el("div", "view");
+  const head = el("div", "view-h");
+  head.appendChild(el("span", "v-title", view.title));
+  head.appendChild(el("span", "v-date", view.date));
+  box.appendChild(head);
+  if (view.note) box.appendChild(el("div", "note-line", view.note));
+  for (const sec of view.sections) box.appendChild(section(sec));
+  if (view.questions && view.questions.length) {
+    const q = el("div", "card tone-ask");
+    q.appendChild(el("div", "card-h", "확인이 필요해요"));
+    view.questions.forEach((text, i) => q.appendChild(el("div", "line", `${i + 1}. ${text}`)));
+    box.appendChild(q);
+  }
+  return box;
 }
 
 async function send(text) {
   text = (text || "").trim();
   if (!text) return;
-
-  addBubble("user", text);
+  addUser(text);
   history.push({ role: "user", content: text });
   input.value = "";
   autosize();
 
-  const pending = addBubble("assistant", "정리하는 중…");
-  pending.parentElement.classList.add("pending");
+  const wrap = el("div", "msg assistant pending");
+  wrap.appendChild(el("div", "welcome", "정리하는 중…"));
+  chatEl.appendChild(wrap);
+  chatEl.scrollTop = chatEl.scrollHeight;
   sendBtn.disabled = true;
 
   try {
@@ -43,20 +107,30 @@ async function send(text) {
       body: JSON.stringify({ messages: history }),
     });
     const data = await res.json();
-    pending.parentElement.classList.remove("pending");
+    wrap.innerHTML = "";
+    wrap.classList.remove("pending");
     if (!res.ok) {
-      pending.textContent = "⚠️ " + (data.detail || "오류가 발생했어요.");
+      wrap.appendChild(el("div", "error", "⚠️ " + (data.detail || "오류가 발생했어요.")));
       return;
     }
-    pending.textContent = data.reply;
-    history.push({ role: "assistant", content: data.reply });
+    wrap.appendChild(renderView(data.view));
+    // 어시스턴트 컨텍스트는 간단한 요약으로 저장(토큰 절약)
+    history.push({ role: "assistant", content: assistantContext(data.view) });
   } catch (e) {
-    pending.parentElement.classList.remove("pending");
-    pending.textContent = "⚠️ 네트워크 오류: " + e.message;
+    wrap.innerHTML = "";
+    wrap.classList.remove("pending");
+    wrap.appendChild(el("div", "error", "⚠️ 네트워크 오류: " + e.message));
   } finally {
     sendBtn.disabled = false;
     chatEl.scrollTop = chatEl.scrollHeight;
   }
+}
+
+// LLM 후속 맥락용 텍스트(질문 답변 등 해석 도움)
+function assistantContext(view) {
+  const parts = [view.note || view.title];
+  if (view.questions && view.questions.length) parts.push("질문: " + view.questions.join(" / "));
+  return parts.join(" ");
 }
 
 form.addEventListener("submit", (e) => {
@@ -64,7 +138,6 @@ form.addEventListener("submit", (e) => {
   send(input.value);
 });
 
-// 빠른 메뉴 클릭 → data-cmd(정식 라벨)를 전송. 표시 텍스트는 미니멀하게 분리.
 document.getElementById("menu").addEventListener("click", (e) => {
   const btn = e.target.closest("button");
   if (btn) send(btn.dataset.cmd || btn.textContent);

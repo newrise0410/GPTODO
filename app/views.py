@@ -1,53 +1,55 @@
-"""결정론적 보기 렌더러 — 프롬프트 §5/§7/§16/§20~22.
+"""구조화된 보기 빌더 — 프롬프트 §5/§7/§16/§20~22.
 
+문자열이 아니라 섹션/항목 구조(JSON)를 만든다. 그룹 구별·테마는 프런트가 담당.
 모든 보기는 LLM 없이 상태에서 직접 생성한다(즉시·무료·일관).
-빠른 메뉴는 UI가 고정 출력하므로 텍스트에는 넣지 않는다.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 from collections import defaultdict
+from typing import Any
 
 from . import timeutil
-from .models import PRIORITY_EMOJI, Item
+from .models import Item
 
 
-def _top() -> str:
-    return f"[오늘은 {timeutil.header()}입니다]"
+def _item_view(it: Item, *, with_date: bool = False, divider: str | None = None,
+               note: str | None = None) -> dict[str, Any]:
+    return {
+        "id": it.id,
+        "title": it.title,
+        "time": it.time,
+        "kind": it.kind,
+        "done": it.status == "done",
+        "priority": it.priority,
+        "date": it.date if with_date else None,
+        "recurrence": it.recurrence,
+        "location": it.location,
+        "divider": divider,        # 카드 안에서 '시간 미정' 같은 소제목 구분
+        "note": note,
+    }
 
 
-def _prio_prefix(item: Item) -> str:
-    # §10: 부드럽게 — 매우 높음/높음만 표시
-    if item.priority in ("very_high", "high"):
-        return PRIORITY_EMOJI[item.priority] + " "
-    return ""
+def _view(title: str, sections: list[dict], *, note: str | None = None,
+          questions: list[str] | None = None) -> dict[str, Any]:
+    return {
+        "date": timeutil.header(),
+        "title": title,
+        "note": note,
+        "sections": sections,
+        "questions": questions or [],
+    }
 
 
-def _line(item: Item, *, with_date: bool = False) -> str:
-    parts = []
-    if item.status == "done":
-        parts.append("✅")
-    elif item.kind == "event" and item.time:
-        parts.append(item.time)
-    else:
-        parts.append("□")
-    prefix = _prio_prefix(item)
-    title = f"{prefix}{item.title}"
-    if with_date and item.date:
-        title = f"{item.date} {title}"
-    parts.append(title)
-    if item.recurrence:
-        parts.append(f"({item.recurrence})")
-    if item.location:
-        parts.append(f"@{item.location}")
-    return "  " + " ".join(parts)
+def _section(label: str, tone: str, *, items: list[dict] | None = None,
+             lines: list[str] | None = None) -> dict[str, Any]:
+    return {"label": label, "tone": tone, "items": items or [], "lines": lines or []}
 
 
 # ---------------------------------------------------------------- 충돌(§16)
 
 def detect_conflicts(items: list[Item]) -> list[tuple[str, str, list[Item]]]:
-    """같은 날짜+시간에 일정(event) 2건 이상 → (date, time, [items])."""
     groups: dict[tuple[str, str], list[Item]] = defaultdict(list)
     for it in items:
         if it.status == "done" or it.kind != "event" or not it.date or not it.time:
@@ -56,119 +58,114 @@ def detect_conflicts(items: list[Item]) -> list[tuple[str, str, list[Item]]]:
     return [(d, t, g) for (d, t), g in sorted(groups.items()) if len(g) >= 2]
 
 
-def _conflict_block(items: list[Item]) -> str:
+def _conflict_section(items: list[Item]) -> dict | None:
     conflicts = detect_conflicts(items)
     if not conflicts:
-        return ""
-    lines = ["", "⚠️ 일정 충돌 가능성이 있어요."]
+        return None
+    rows = []
     for d, t, g in conflicts:
-        names = " / ".join(i.title for i in g)
-        lines.append(f"  {d} {t} — {names}")
-    return "\n".join(lines)
+        for it in g:
+            rows.append(_item_view(it, with_date=True, note=f"{t} 겹침"))
+    return _section("충돌 가능성", "conflict", items=rows)
 
 
 # ---------------------------------------------------------------- 캘린더(기본)
 
-def _sort_in_day(items: list[Item]) -> list[Item]:
-    # 시간 있는 일정 먼저(시간순), 그다음 시간 미정/할 일(우선순위순)
+def _sort_day(items: list[Item]) -> list[Item]:
     timed = sorted((i for i in items if i.time), key=lambda i: i.time)
     untimed = sorted((i for i in items if not i.time), key=lambda i: i.rank)
-    return timed + untimed
+    return timed, untimed
 
 
-def render_calendar(items: list[Item], scope: str = "all") -> str:
+def build_calendar(items: list[Item], scope: str = "all") -> dict[str, Any]:
     ref = timeutil.today()
     open_items = [i for i in items if i.status != "done"]
     dated = [i for i in open_items if i.date_obj and timeutil.in_scope(i.date_obj, scope, ref)]
-    undated = [i for i in open_items if not i.date_obj]
+    undated = [i for i in open_items if not i.date_obj and not i.recurrence]
     recurring = [i for i in open_items if i.recurrence and not i.date_obj]
 
-    out = [_top(), ""]
     scope_label = {"today": "오늘", "week": "이번 주", "month": "이번 달", "all": "전체"}[scope]
-    out.append(f"📆 {scope_label} 정리")
+    sections: list[dict] = []
 
     by_date: dict[dt.date, list[Item]] = defaultdict(list)
     for it in dated:
         by_date[it.date_obj].append(it)
 
-    if not by_date and not undated:
-        out.append("\n아직 정리된 항목이 없어요. 자유롭게 적어주시면 캘린더로 정리해드릴게요.")
-        return "\n".join(out)
-
     for d in sorted(by_date):
-        tag = " (오늘)" if d == ref else (" (내일)" if d == ref + dt.timedelta(days=1) else "")
-        out.append(f"\n📅 {timeutil.header(d)}{tag}")
-        day_items = _sort_in_day(by_date[d])
-        timed = [i for i in day_items if i.time]
-        untimed = [i for i in day_items if not i.time]
-        for it in timed:
-            out.append(_line(it))
-        if untimed:
-            out.append("  🕒 시간 미정")
-            for it in untimed:
-                out.append(_line(it))
+        tag = " · 오늘" if d == ref else (" · 내일" if d == ref + dt.timedelta(days=1) else "")
+        tone = "today" if d == ref else "date"
+        timed, untimed = _sort_day(by_date[d])
+        rows = [_item_view(it) for it in timed]
+        for idx, it in enumerate(untimed):
+            rows.append(_item_view(it, divider="시간 미정" if idx == 0 and timed else None))
+        sections.append(_section(timeutil.header(d) + tag, tone, items=rows))
 
-    # 날짜 미정 할 일은 잃어버리지 않게 항상 노출(§25)
-    plain_undated = [i for i in undated if not i.recurrence]
-    if plain_undated:
-        out.append("\n📝 날짜 미정")
-        for it in sorted(plain_undated, key=lambda i: i.rank):
-            out.append(_line(it))
+    if undated:
+        rows = [_item_view(it) for it in sorted(undated, key=lambda i: i.rank)]
+        sections.append(_section("날짜 미정", "nodate", items=rows))
 
     if recurring:
-        out.append("\n🔁 반복 일정")
-        for it in recurring:
-            out.append(_line(it))
+        rows = [_item_view(it) for it in recurring]
+        sections.append(_section("반복 일정", "recurring", items=rows))
 
-    block = _conflict_block(open_items)
-    if block:
-        out.append(block)
-    return "\n".join(out)
+    conflict = _conflict_section(open_items)
+    if conflict:
+        sections.append(conflict)
+
+    if not sections:
+        sections.append(_section("", "empty",
+                                 lines=["아직 정리된 항목이 없어요. 자유롭게 적어주시면 캘린더로 정리해드릴게요."]))
+    return _view(f"{scope_label} 정리", sections)
 
 
 # ---------------------------------------------------------------- 분류(§9)
 
-def render_categories(items: list[Item]) -> str:
+def build_categories(items: list[Item]) -> dict[str, Any]:
     open_items = [i for i in items if i.status != "done"]
     by_cat: dict[str, list[Item]] = defaultdict(list)
     for it in open_items:
         by_cat[it.category or "기타"].append(it)
-    out = [_top(), "", "🗂 분류별 정리"]
-    if not open_items:
-        out.append("\n정리된 항목이 없어요.")
-        return "\n".join(out)
+    sections = []
     for cat in sorted(by_cat, key=lambda c: (-len(by_cat[c]), c)):
-        out.append(f"\n[{cat}]")
-        for it in sorted(by_cat[cat], key=lambda i: (i.rank, i.date or "9999")):
-            out.append(_line(it, with_date=bool(it.date)))
-    return "\n".join(out)
+        rows = [_item_view(it, with_date=True)
+                for it in sorted(by_cat[cat], key=lambda i: (i.rank, i.date or "9999"))]
+        sections.append(_section(cat, "category", items=rows))
+    if not sections:
+        sections.append(_section("", "empty", lines=["정리된 항목이 없어요."]))
+    return _view("분류별 정리", sections)
 
 
 # ---------------------------------------------------------------- 프로젝트(§12)
 
-def render_projects(items: list[Item]) -> str:
+def build_projects(items: list[Item]) -> dict[str, Any]:
     open_items = [i for i in items if i.status != "done"]
     by_proj: dict[str, list[Item]] = defaultdict(list)
     for it in open_items:
-        by_proj[it.project or "(프로젝트 미지정)"].append(it)
-    out = [_top(), "", "📁 프로젝트별 정리"]
-    named = {k: v for k, v in by_proj.items() if k != "(프로젝트 미지정)"}
-    if not named:
-        out.append("\n아직 프로젝트로 묶인 항목이 없어요. 큰 작업은 단계로 나눠 정리할 수 있어요.")
+        by_proj[it.project or "(미지정)"].append(it)
+    sections = []
+    named = {k: v for k, v in by_proj.items() if k != "(미지정)"}
     for proj, group in sorted(named.items()):
-        out.append(f"\n📂 {proj}")
-        for it in sorted(group, key=lambda i: (i.date or "9999", i.rank)):
-            out.append(_line(it, with_date=bool(it.date)))
-    if by_proj.get("(프로젝트 미지정)"):
-        out.append("\n그 외")
-        for it in by_proj["(프로젝트 미지정)"]:
-            out.append(_line(it, with_date=bool(it.date)))
-    return "\n".join(out)
+        rows = [_item_view(it, with_date=True)
+                for it in sorted(group, key=lambda i: (i.date or "9999", i.rank))]
+        sections.append(_section(proj, "project", items=rows))
+    if by_proj.get("(미지정)"):
+        rows = [_item_view(it, with_date=True) for it in by_proj["(미지정)"]]
+        sections.append(_section("그 외", "plain", items=rows))
+    if not named:
+        sections.insert(0, _section("", "empty",
+                        lines=["아직 프로젝트로 묶인 항목이 없어요. 큰 작업은 단계로 나눌 수 있어요."]))
+    return _view("프로젝트별 정리", sections)
 
 
 # ---------------------------------------------------------------- 대시보드(§21,§22)
 
-def render_dashboard(items: list[Item]) -> str:
+def _due_soon_items(items: list[Item], ref: dt.date, within: int = 2) -> list[Item]:
+    res = [i for i in items if (du := timeutil.days_until(i.date_obj, ref)) is not None
+           and 0 <= du <= within]
+    return sorted(res, key=lambda i: (i.date or "", i.time or "99:99"))
+
+
+def build_dashboard(items: list[Item]) -> dict[str, Any]:
     ref = timeutil.today()
     open_items = [i for i in items if i.status != "done"]
     done = [i for i in items if i.status == "done"]
@@ -176,88 +173,75 @@ def render_dashboard(items: list[Item]) -> str:
     week_n = sum(1 for i in open_items if timeutil.in_scope(i.date_obj, "week", ref))
     no_date = [i for i in open_items if not i.date_obj]
     review = [i for i in open_items if i.needs_review] or detect_conflicts(open_items)
-    soon = _due_soon_items(open_items, ref)
 
-    out = [_top(), "", "📊 현황 대시보드"]
-    out.append(f"\n• 오늘 {today_n}건 · 이번 주 {week_n}건 · 날짜 미정 {len(no_date)}건")
-    out.append(f"• 열린 항목 {len(open_items)}건 · 완료 {len(done)}건 · 확인 필요 {len(review)}건")
+    sections = [_section("요약", "summary", lines=[
+        f"오늘 {today_n} · 이번 주 {week_n} · 날짜 미정 {len(no_date)}",
+        f"열린 항목 {len(open_items)} · 완료 {len(done)} · 확인 필요 {len(review)}",
+    ])]
+    soon = _due_soon_items(open_items, ref)
     if soon:
-        out.append("\n⏰ 마감 임박")
-        for it in soon:
-            out.append(_line(it, with_date=True))
-    important = [i for i in open_items if i.priority in ("very_high", "high")]
+        sections.append(_section("마감 임박", "due",
+                        items=[_item_view(i, with_date=True) for i in soon]))
+    important = sorted((i for i in open_items if i.priority in ("very_high", "high")),
+                       key=lambda i: i.rank)
     if important:
-        out.append("\n⭐ 중요")
-        for it in sorted(important, key=lambda i: i.rank):
-            out.append(_line(it, with_date=bool(it.date)))
-    return "\n".join(out)
+        sections.append(_section("중요", "important",
+                        items=[_item_view(i, with_date=True) for i in important]))
+    return _view("현황 대시보드", sections)
 
 
 # ---------------------------------------------------------------- 확인 보기
 
-def _due_soon_items(items: list[Item], ref: dt.date, within: int = 2) -> list[Item]:
-    res = []
-    for it in items:
-        du = timeutil.days_until(it.date_obj, ref)
-        if du is not None and 0 <= du <= within:
-            res.append(it)
-    return sorted(res, key=lambda i: (i.date or "", i.time or "99:99"))
-
-
-def render_important(items: list[Item]) -> str:
+def build_important(items: list[Item]) -> dict[str, Any]:
     open_items = [i for i in items if i.status != "done"]
-    imp = [i for i in open_items if i.priority in ("very_high", "high")]
-    out = [_top(), "", "⭐ 중요 항목"]
+    imp = sorted((i for i in open_items if i.priority in ("very_high", "high")),
+                 key=lambda i: (i.rank, i.date or "9999"))
     if not imp:
-        out.append("\n중요로 강조된 항목이 없어요.")
-    for it in sorted(imp, key=lambda i: (i.rank, i.date or "9999")):
-        out.append(_line(it, with_date=bool(it.date)))
-    return "\n".join(out)
+        return _view("중요 항목", [_section("", "empty", lines=["중요로 강조된 항목이 없어요."])])
+    return _view("중요 항목",
+                 [_section("중요", "important", items=[_item_view(i, with_date=True) for i in imp])])
 
 
-def render_due_soon(items: list[Item]) -> str:
+def build_due_soon(items: list[Item]) -> dict[str, Any]:
     ref = timeutil.today()
     soon = _due_soon_items([i for i in items if i.status != "done"], ref, within=3)
-    out = [_top(), "", "⏰ 마감 임박 (오늘~3일)"]
     if not soon:
-        out.append("\n임박한 마감이 없어요.")
+        return _view("마감 임박", [_section("", "empty", lines=["임박한 마감이 없어요."])])
+    rows = []
     for it in soon:
         du = timeutil.days_until(it.date_obj, ref)
         tag = {0: "오늘", 1: "내일"}.get(du, f"{du}일 뒤")
-        out.append(_line(it, with_date=True) + f"  — {tag}")
-    return "\n".join(out)
+        rows.append(_item_view(it, with_date=True, note=tag))
+    return _view("마감 임박 (오늘~3일)", [_section("임박", "due", items=rows)])
 
 
-def render_no_date(items: list[Item]) -> str:
-    nd = [i for i in items if i.status != "done" and not i.date_obj]
-    out = [_top(), "", "📝 날짜 미정"]
+def build_no_date(items: list[Item]) -> dict[str, Any]:
+    nd = sorted((i for i in items if i.status != "done" and not i.date_obj),
+                key=lambda i: i.rank)
     if not nd:
-        out.append("\n날짜 미정 항목이 없어요.")
-    for it in sorted(nd, key=lambda i: i.rank):
-        out.append(_line(it))
-    return "\n".join(out)
+        return _view("날짜 미정", [_section("", "empty", lines=["날짜 미정 항목이 없어요."])])
+    return _view("날짜 미정",
+                 [_section("날짜 미정", "nodate", items=[_item_view(i) for i in nd])])
 
 
-def render_review(items: list[Item]) -> str:
+def build_review(items: list[Item]) -> dict[str, Any]:
     open_items = [i for i in items if i.status != "done"]
     review = [i for i in open_items if i.needs_review]
-    out = [_top(), "", "⚠️ 확인 필요"]
-    if not review and not detect_conflicts(open_items):
-        out.append("\n확인이 필요한 항목이 없어요.")
-    for it in review:
-        reason = f" — {it.review_reason}" if it.review_reason else ""
-        out.append(_line(it, with_date=bool(it.date)) + reason)
-    block = _conflict_block(open_items)
-    if block:
-        out.append(block)
-    return "\n".join(out)
+    sections = []
+    if review:
+        rows = [_item_view(it, with_date=True, note=it.review_reason) for it in review]
+        sections.append(_section("확인 필요", "review", items=rows))
+    conflict = _conflict_section(open_items)
+    if conflict:
+        sections.append(conflict)
+    if not sections:
+        sections.append(_section("", "empty", lines=["확인이 필요한 항목이 없어요."]))
+    return _view("확인 필요", sections)
 
 
-def render_date_refresh() -> str:
+def build_date_refresh() -> dict[str, Any]:
     n = timeutil.now()
-    return (
-        f"[오늘은 {timeutil.header()}입니다]\n\n"
-        f"🔄 기준 날짜를 갱신했어요.\n"
-        f"• 현재(KST): {timeutil.header()} {n:%H:%M}\n"
-        f"• 이제 오늘/내일/이번 주/다음 주/이번 달 계산은 이 날짜를 기준으로 합니다."
-    )
+    return _view("날짜 갱신", [_section("기준 날짜", "summary", lines=[
+        f"현재(KST) {timeutil.header()} {n:%H:%M}",
+        "이제 오늘/내일/이번 주/다음 주/이번 달 계산은 이 날짜를 기준으로 합니다.",
+    ])])

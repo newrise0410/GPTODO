@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Any, Callable
 
 from . import store, views
 
-# 라벨(이모지 포함) → 렌더 함수. 프런트가 보내는 버튼 텍스트와 정확히 일치.
+# 라벨(이모지 포함) → 보기. 프런트가 보내는 data-cmd와 정확히 일치.
 _SCOPE_VIEWS: dict[str, str] = {
     "☀️ 오늘": "today",
     "📅 이번 주": "week",
@@ -15,14 +15,14 @@ _SCOPE_VIEWS: dict[str, str] = {
     "📆 캘린더": "all",
 }
 
-_OTHER_VIEWS: dict[str, Callable[[list], str]] = {
-    "🗂 분류하기": views.render_categories,
-    "📁 프로젝트": views.render_projects,
-    "📊 대시보드": views.render_dashboard,
-    "⭐ 중요": views.render_important,
-    "⏰ 마감 임박": views.render_due_soon,
-    "📝 날짜 미정": views.render_no_date,
-    "⚠️ 확인 필요": views.render_review,
+_OTHER_VIEWS: dict[str, Callable[[list], dict]] = {
+    "🗂 분류하기": views.build_categories,
+    "📁 프로젝트": views.build_projects,
+    "📊 대시보드": views.build_dashboard,
+    "⭐ 중요": views.build_important,
+    "⏰ 마감 임박": views.build_due_soon,
+    "📝 날짜 미정": views.build_no_date,
+    "⚠️ 확인 필요": views.build_review,
 }
 
 MENU_LABELS = set(_SCOPE_VIEWS) | set(_OTHER_VIEWS) | {"🔄 날짜 갱신"}
@@ -32,14 +32,14 @@ def is_menu(text: str) -> bool:
     return text.strip() in MENU_LABELS
 
 
-def render(text: str) -> str:
-    """메뉴 라벨에 해당하는 보기를 상태에서 렌더링."""
+def render(text: str) -> dict[str, Any]:
+    """메뉴 라벨에 해당하는 구조화된 보기(view dict)를 상태에서 생성."""
     text = text.strip()
     if text == "🔄 날짜 갱신":
-        return views.render_date_refresh()
+        return views.build_date_refresh()
     items = store.all_items()
     if text in _SCOPE_VIEWS:
-        return views.render_calendar(items, scope=_SCOPE_VIEWS[text])
+        return views.build_calendar(items, scope=_SCOPE_VIEWS[text])
     if text in _OTHER_VIEWS:
         return _OTHER_VIEWS[text](items)
-    return views.render_calendar(items, scope="all")
+    return views.build_calendar(items, scope="all")

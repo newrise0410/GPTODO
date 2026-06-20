@@ -54,9 +54,9 @@ def api_chat(req: ChatRequest):
 
     # 1) 빠른 메뉴 → 보기 전환 (LLM 미사용)
     if menu.is_menu(text):
-        return {"reply": menu.render(text), "source": "menu"}
+        return {"view": menu.render(text), "source": "menu"}
 
-    # 2) 자유 문장 → LLM 추출 → 연산 적용
+    # 2) 자유 문장 → LLM 추출 → 연산 적용 → 갱신된 캘린더
     try:
         result = extract(history[-HISTORY_LIMIT:])
     except CodexAuthError as e:
@@ -65,20 +65,10 @@ def api_chat(req: ChatRequest):
         raise HTTPException(status_code=502, detail=f"LLM 호출 실패: {e}") from e
 
     counts = apply_operations(result["operations"])
-    reply = _compose(result["reply"], result["questions"], counts)
-    return {"reply": reply, "source": "llm", "counts": counts}
-
-
-def _compose(reply: str, questions: list[str], counts: dict) -> str:
-    """짧은 수신확인 + 갱신된 캘린더 + (필요 시) 확인 질문."""
-    parts = []
-    if reply:
-        parts.append(reply)
-    parts.append(views.render_calendar(store.all_items(), scope="all"))
-    if questions:
-        q = "\n".join(f"{i+1}. {q}" for i, q in enumerate(questions))
-        parts.append("❓ 확인이 필요해요\n" + q)
-    return "\n\n".join(parts)
+    view = views.build_calendar(store.all_items(), scope="all")
+    view["note"] = result["reply"] or None
+    view["questions"] = result["questions"]
+    return {"view": view, "source": "llm", "counts": counts}
 
 
 @app.get("/api/today")

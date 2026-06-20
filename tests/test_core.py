@@ -416,6 +416,26 @@ def test_dashboard_counts_recurrence_occurrences():
     assert "날짜 미정 0" in summary  # 반복은 '날짜 미정'에 포함되지 않음
 
 
+def test_message_transcript_persistence():
+    # 사용자/어시스턴트 턴 저장 후 그대로 복원, view 스냅샷 포함
+    store.add_message("user", "내일 회의")
+    store.add_message("assistant", "정리했어요", view={"title": "전체 정리", "sections": []})
+    msgs = store.all_messages()
+    assert [m["role"] for m in msgs] == ["user", "assistant"]
+    assert msgs[0]["content"] == "내일 회의" and msgs[0]["view"] is None
+    assert msgs[1]["view"]["title"] == "전체 정리"
+    store.clear_messages()
+    assert store.all_messages() == []
+
+
+def test_messages_endpoints(client):
+    store.add_message("user", "테스트")
+    r = client.get("/api/messages")
+    assert r.status_code == 200 and r.json()["messages"][0]["content"] == "테스트"
+    assert client.post("/api/messages/clear").status_code == 200
+    assert client.get("/api/messages").json()["messages"] == []
+
+
 @pytest.fixture
 def client():
     return TestClient(app)

@@ -64,7 +64,9 @@ def api_chat(req: ChatRequest):
         raise HTTPException(status_code=502, detail=f"LLM 호출 실패: {e}") from e
 
     counts = apply_operations(result["operations"])
-    return {"view": _reply_view(result), "source": "llm", "counts": counts}
+    view = _reply_view(result)
+    _save_turn(text, view)
+    return {"view": view, "source": "llm", "counts": counts}
 
 
 def _reply_view(result: dict) -> dict:
@@ -73,6 +75,20 @@ def _reply_view(result: dict) -> dict:
     view["note"] = result["reply"] or None
     view["questions"] = result["questions"]
     return view
+
+
+def _assistant_context(view: dict) -> str:
+    """LLM 후속 맥락용 요약 텍스트(프런트 assistantContext와 동일 규칙)."""
+    parts = [view.get("note") or view.get("title", "")]
+    if view.get("questions"):
+        parts.append("질문: " + " / ".join(view["questions"]))
+    return " ".join(p for p in parts if p)
+
+
+def _save_turn(user_text: str, view: dict) -> None:
+    """LLM 대화 한 턴(사용자+어시스턴트)을 영속화. 메뉴 내비게이션은 저장 안 함."""
+    store.add_message("user", user_text)
+    store.add_message("assistant", _assistant_context(view), view=view)
 
 
 def _validate(req: ChatRequest) -> list[dict]:
@@ -111,10 +127,25 @@ def api_chat_stream(req: ChatRequest):
             yield _sse({"type": "error", "detail": f"LLM 호출 실패: {e}"})
             return
         counts = apply_operations(result["operations"])
-        yield _sse({"type": "view", "view": _reply_view(result), "counts": counts})
+        view = _reply_view(result)
+        _save_turn(text, view)
+        yield _sse({"type": "view", "view": view, "counts": counts})
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.get("/api/messages")
+def api_messages():
+    """저장된 대화 기록(새로고침 복원용)."""
+    return {"messages": store.all_messages()}
+
+
+@app.post("/api/messages/clear")
+def api_clear_messages():
+    """대화 기록만 비움(항목/프로필은 유지)."""
+    store.clear_messages()
+    return {"ok": True}
 
 
 @app.get("/api/view")

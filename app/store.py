@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
@@ -37,6 +38,17 @@ CREATE TABLE IF NOT EXISTS items (
     needs_review INTEGER NOT NULL DEFAULT 0,
     review_reason TEXT,
     created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
+# 대화 기록(채팅 말풍선) — 새로고침/재시작 후 복원용.
+MESSAGES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    role       TEXT NOT NULL,                 -- user | assistant
+    content    TEXT NOT NULL DEFAULT '',      -- LLM 컨텍스트용 텍스트
+    view_json  TEXT,                          -- assistant: 렌더할 view 스냅샷(JSON)
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
 
@@ -80,6 +92,7 @@ def _conn() -> sqlite3.Connection:
 def init() -> None:
     with _conn() as conn:
         conn.executescript(SCHEMA)
+        conn.executescript(MESSAGES_SCHEMA)
         existing = {r["name"] for r in conn.execute("PRAGMA table_info(items)")}
         for col, ddl in _COLUMN_DDL.items():
             if col not in existing:
@@ -217,3 +230,33 @@ def get(item_id: int) -> Item | None:
 def clear() -> None:
     with _conn() as conn:
         conn.execute("DELETE FROM items")
+
+
+# ---- 대화 기록 ----
+
+def add_message(role: str, content: str, view: dict | None = None) -> int:
+    view_json = json.dumps(view, ensure_ascii=False) if view is not None else None
+    with _conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO messages (role, content, view_json) VALUES (?, ?, ?)",
+            (role, content, view_json),
+        )
+        return int(cur.lastrowid)
+
+
+def all_messages() -> list[dict]:
+    with _conn() as conn:
+        rows = conn.execute("SELECT * FROM messages ORDER BY id").fetchall()
+    out = []
+    for r in rows:
+        out.append({
+            "role": r["role"],
+            "content": r["content"],
+            "view": json.loads(r["view_json"]) if r["view_json"] else None,
+        })
+    return out
+
+
+def clear_messages() -> None:
+    with _conn() as conn:
+        conn.execute("DELETE FROM messages")

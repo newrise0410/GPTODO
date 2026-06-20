@@ -22,19 +22,51 @@ fetch("/api/today")
   .then((d) => (document.getElementById("today").textContent = d.date_header))
   .catch(() => {});
 
-// 초기 로드: 저장된 항목이 있으면 보드를 바로 렌더
-fetch("/api/view")
+function renderAssistantView(view) {
+  const wrap = el("div", "msg assistant");
+  wrap.appendChild(renderView(view));
+  chatEl.appendChild(wrap);
+}
+
+function showWelcome() {
+  const wrap = el("div", "msg assistant");
+  const w = el("div", "welcome");
+  w.innerHTML = "아무렇게나 적어도 캘린더로 정리해드려요.<br>예) 내일 3시 면접, 저녁에 장보기, 보고서도 써야 해";
+  wrap.appendChild(w);
+  chatEl.appendChild(wrap);
+}
+
+// 초기 로드: 저장된 대화 기록을 복원, 없으면 현재 보드만 렌더
+fetch("/api/messages")
   .then((r) => r.json())
   .then((d) => {
-    const has = d.view.sections.some((s) => s.items.length);
-    if (has) {
-      const wrap = el("div", "msg assistant");
-      wrap.appendChild(renderView(d.view));
-      chatEl.appendChild(wrap);
+    if (d.messages && d.messages.length) {
+      for (const m of d.messages) {
+        if (m.role === "user") addUser(m.content);
+        else if (m.view) renderAssistantView(m.view);
+        history.push({ role: m.role, content: m.content });
+      }
       chatEl.scrollTop = chatEl.scrollHeight;
+    } else {
+      fetch("/api/view")
+        .then((r) => r.json())
+        .then((v) => {
+          if (v.view.sections.some((s) => s.items.length)) renderAssistantView(v.view);
+          else showWelcome();
+        })
+        .catch(showWelcome);
     }
   })
   .catch(() => {});
+
+// 대화 비우기(항목/프로필은 유지)
+document.getElementById("clear").addEventListener("click", async () => {
+  if (!confirm("대화 기록을 비울까요? (할 일/일정 항목은 그대로 유지됩니다)")) return;
+  await fetch("/api/messages/clear", { method: "POST" }).catch(() => {});
+  history.length = 0;
+  chatEl.innerHTML = "";
+  showWelcome();
+});
 
 // ── 헬퍼 ──
 function el(tag, cls, text) {

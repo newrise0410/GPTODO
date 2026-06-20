@@ -11,15 +11,12 @@
     <span class="brand">GPTODO</span>
     <span class="head-right">
       <span id="today" class="today"></span>
+      <button id="clear" class="theme-btn" aria-label="대화 비우기" title="대화 기록 비우기">🗑</button>
       <button id="theme" class="theme-btn" aria-label="테마 전환" title="라이트/다크 전환">◐</button>
     </span>
   </header>
 
-  <main id="chat" class="chat">
-    <div class="msg assistant">
-      <div class="welcome">아무렇게나 적어도 캘린더로 정리해드려요.<br>예) 내일 3시 면접, 저녁에 장보기, 보고서도 써야 해</div>
-    </div>
-  </main>
+  <main id="chat" class="chat"></main>
 
   <!-- 빠른 메뉴 (§20) — data-cmd가 서버로 전송되는 정식 라벨 -->
   <nav class="menu" id="menu">

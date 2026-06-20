@@ -7,7 +7,7 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from . import timeutil
+from . import dateresolve, timeutil
 
 # 프롬프트 §9 카테고리
 CATEGORIES = ["업무", "학업", "건강", "개인", "가족", "재무", "취미", "여행", "인간관계", "기타"]
@@ -85,12 +85,9 @@ def coerce_item(raw: dict[str, Any]) -> Item:
 
     title = _as_str(raw.get("title")) or ""
     kind = pick("kind", KINDS) or "todo"
-    date = pick("date")
-    if date and not timeutil.parse_date(date):  # 형식 틀리면 날짜 미정
-        date = None
-    deadline = pick("deadline")
-    if deadline and not timeutil.parse_date(deadline):
-        deadline = None
+    # 날짜: 원문 표현(date_expr)이 있으면 코드가 환산한 값을 우선(모델 계산 오류 보정)
+    date = _resolve_or_keep(pick("date_expr"), pick("date"))
+    deadline = _resolve_or_keep(pick("deadline_expr"), pick("deadline"))
     return Item(
         title=title,
         kind=kind,
@@ -109,6 +106,15 @@ def coerce_item(raw: dict[str, Any]) -> Item:
         needs_review=_as_bool(raw.get("needs_review")),
         review_reason=pick("review_reason"),
     )
+
+
+def _resolve_or_keep(expr: str | None, model_date: str | None) -> str | None:
+    """원문 표현이 풀리면 그 날짜, 아니면 모델이 준 날짜(형식 검증)."""
+    if expr:
+        rd = dateresolve.resolve(expr, timeutil.today())
+        if rd:
+            return rd.isoformat()
+    return model_date if (model_date and timeutil.parse_date(model_date)) else None
 
 
 def fmt_estimate(minutes: int | None) -> str | None:
@@ -134,6 +140,10 @@ def coerce_changes(changes: dict[str, Any]) -> dict[str, Any]:
         if k == "kind":
             if v in KINDS:
                 out[k] = v
+        elif k in ("date_expr", "deadline_expr"):  # 원문 표현 → 코드가 환산
+            rd = dateresolve.resolve(_as_str(v), timeutil.today())
+            if rd:
+                out["deadline" if k == "deadline_expr" else "date"] = rd.isoformat()
         elif k in ("date", "deadline"):
             s = _as_str(v)
             if v is None:

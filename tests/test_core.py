@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app import menu, profile, recurrence, store, timeutil, views
+from app import dateresolve, menu, profile, recurrence, store, timeutil, views
 from app.llm.extract import _parse, apply_operations
 from app.main import app
 from app.models import Item, coerce_changes, coerce_item, fmt_estimate
@@ -443,6 +443,35 @@ def test_messages_endpoints(client):
     assert r.status_code == 200 and r.json()["messages"][0]["content"] == "테스트"
     assert client.post("/api/messages/clear").status_code == 200
     assert client.get("/api/messages").json()["messages"] == []
+
+
+def test_dateresolver():
+    import datetime as _dt
+    sat = _dt.date(2026, 6, 20)  # 토요일
+    R = lambda e: dateresolve.resolve(e, sat)  # noqa: E731
+    assert R("오늘") == _dt.date(2026, 6, 20)
+    assert R("내일") == _dt.date(2026, 6, 21)
+    assert R("모레") == _dt.date(2026, 6, 22)
+    assert R("금요일") == _dt.date(2026, 6, 26)        # 다가오는 금요일(모델들이 틀리던 케이스)
+    assert R("다음 주 화요일") == _dt.date(2026, 6, 23)
+    assert R("이번 달 말") == _dt.date(2026, 6, 30)
+    assert R("다음 달 초") == _dt.date(2026, 7, 1)
+    assert R("3일 후") == _dt.date(2026, 6, 23)
+    assert R("6월 25일") == _dt.date(2026, 6, 25)
+    assert R("횡설수설") is None                        # 못 풀면 None
+
+
+def test_date_expr_overrides_model_date():
+    # 모델이 금요일을 06-27로 틀려도, deadline_expr로 코드가 06-26로 교정
+    it = coerce_item({"title": "세금신고", "deadline": "2026-06-27", "deadline_expr": "금요일"})
+    assert it.deadline == "2026-06-26"
+    # date_expr도 동일
+    assert coerce_item({"title": "x", "date": "2026-06-23", "date_expr": "금요일"}).date == "2026-06-26"
+    # expr가 없으면 모델 값 유지
+    assert coerce_item({"title": "x", "date": "2026-07-01"}).date == "2026-07-01"
+    # update 경로
+    assert coerce_changes({"date_expr": "내일"})["date"] == (
+        timeutil.today() + __import__("datetime").timedelta(days=1)).isoformat()
 
 
 @pytest.fixture

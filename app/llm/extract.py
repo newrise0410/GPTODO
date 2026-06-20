@@ -42,8 +42,11 @@ item/changes 속성:
 - title (필수, 문자열)
 - kind: "event"(특정 날짜·시간) / "todo"(날짜·시간 불명확) / "memo"(메모) / "idea"(아이디어)
 - date: "YYYY-MM-DD" 또는 null(날짜 미정)
+- date_expr: 날짜를 가리키는 원문 표현 그대로(예:"내일","금요일","다음 주 화요일","이번 달 말","6월 25일").
+  상대·요일 표현이면 반드시 이 필드를 채워라 — 실제 날짜 계산은 앱이 정확히 한다(date는 비워도 됨).
 - time: "HH:MM" 24시간제 또는 null(시간 미정). 오후 3시→"15:00", 정오→"12:00".
-- deadline: 마감일 "YYYY-MM-DD" 또는 null(일정 날짜와 별개. "~까지" 표현은 deadline)
+- deadline: 마감일 "YYYY-MM-DD" 또는 null(일정 날짜와 별개. "~까지" 표현은 deadline).
+  deadline_expr: 마감의 원문 표현(예:"금요일까지"의 "금요일"). 상대·요일이면 반드시 채워라.
 - category: {CATEGORIES} 중 하나 또는 null
 - priority: "very_high"|"high"|"medium"|"low"|null  (오늘마감/제출/시험/면접/계약=very_high, 내일·이번주마감/예약/병원=high)
 - recurrence: "매주 월요일"·"격주 수요일"·"매월 1일"·"마지막 금요일" 같은 반복 주기 또는 null

@@ -10,7 +10,7 @@ import json
 from collections.abc import Iterator
 from typing import Any
 
-from .. import store, timeutil
+from .. import profile, store, timeutil
 from ..models import CATEGORIES, Item, coerce_changes, coerce_item
 from .client import complete, complete_stream
 
@@ -32,31 +32,34 @@ JSON 형식:
     {{{{"op": "complete", "id": 3}}}},
     {{{{"op": "reopen", "id": 3}}}},
     {{{{"op": "update", "id": 5, "changes": {{{{...바뀐 속성만...}}}}}}}},
-    {{{{"op": "delete", "id": 5}}}}
+    {{{{"op": "delete", "id": 5}}}},
+    {{{{"op": "set_profile", "profile": {{{{"name": "...", "role": "...", "categories": ["업무"], "preference": "캘린더"}}}}}}}}
   ],
   "questions": ["최대 2개. 정말 불명확할 때만."]
 }}}}
 
 item/changes 속성:
 - title (필수, 문자열)
-- kind: "event"(특정 날짜·시간) 또는 "todo"(날짜/시간 불명확)
+- kind: "event"(특정 날짜·시간) / "todo"(날짜·시간 불명확) / "memo"(메모) / "idea"(아이디어)
 - date: "YYYY-MM-DD" 또는 null(날짜 미정)
 - time: "HH:MM" 24시간제 또는 null(시간 미정). 오후 3시→"15:00", 정오→"12:00".
+- deadline: 마감일 "YYYY-MM-DD" 또는 null(일정 날짜와 별개. "~까지" 표현은 deadline)
 - category: {CATEGORIES} 중 하나 또는 null
 - priority: "very_high"|"high"|"medium"|"low"|null  (오늘마감/제출/시험/면접/계약=very_high, 내일·이번주마감/예약/병원=high)
-- recurrence: "매주 월요일" 같은 반복 주기 또는 null
-- project: 큰 작업명 또는 null
+- recurrence: "매주 월요일"·"격주 수요일"·"매월 1일"·"마지막 금요일" 같은 반복 주기 또는 null
+- project: 큰 작업명 또는 null.  parent_id: 기존 상위 항목 id(분해 단계일 때).  sort_order: 단계 순서 정수
 - location, people: 있으면, 없으면 null
 - estimate_min: 예상 소요(분) 정수 또는 null
 - needs_review: 날짜/시간/대상이 모호하면 true
 - review_reason: needs_review가 true면 짧은 이유
 
 핵심 규칙:
-1) 사용자가 말하지 않은 항목을 만들지 마라. 단, 큰 작업은 단계로 분해 제안 가능(이때 수신 확인에 분해임을 알림).
-2) 한 문장에 여러 항목이 있으면 각각 분리해 add 한다.
+1) 사용자가 말하지 않은 항목을 만들지 마라. 단, 큰 작업은 단계로 분해 제안 가능(이때 같은 project 값으로 여러 add, 수신 확인에 분해임을 알림).
+2) 한 문장에 여러 항목이 있으면 각각 분리해 add 한다. 단순 적어두기/생각은 kind="memo"/"idea".
 3) 완료/끝냈어/했어 → complete. 삭제/취소 → delete. 시간·내용 변경 → update.
    대상이 여러 개라 모호하면 연산하지 말고 questions로 물어라.
-4) 보기 전환(오늘/이번 주/대시보드 등)은 네가 처리하지 않는다 — 그런 요청이면 operations는 비우고 수신 확인만.
+3-1) 사용자가 이름/직업/선호 카테고리/정리 방식을 알려주면 set_profile로 저장한다.
+4) 보기 전환(오늘/이번 주/대시보드/표/체크리스트/요약 등)은 네가 처리하지 않는다 — 그런 요청이면 operations는 비우고 수신 확인만.
 5) 저장했다고 단정하지 마라("정리했어요" 정도).
 """
 
@@ -120,7 +123,11 @@ def _system_prompt() -> str:
 
 
 def _instructions() -> str:
-    return _system_prompt() + "\n\n" + _items_context(store.all_items())
+    parts = [_system_prompt(), _items_context(store.all_items())]
+    prof = profile.as_context()
+    if prof:
+        parts.append(prof)
+    return "\n\n".join(parts)
 
 
 def extract(history: list[dict[str, Any]]) -> dict[str, Any]:
@@ -171,6 +178,9 @@ def apply_operations(operations: Any) -> dict[str, int]:
                     it = coerce_item(item)
                     if it.title:
                         norm.append(("add", it))
+            elif kind == "set_profile":
+                if isinstance(op.get("profile"), dict):
+                    profile.update(op["profile"])
             elif kind in ("complete", "reopen", "delete", "update"):
                 iid = _as_id(op.get("id"))
                 if iid is None:

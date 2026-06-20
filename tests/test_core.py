@@ -6,10 +6,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app import menu, recurrence, store, timeutil, views
+from app import menu, profile, recurrence, store, timeutil, views
 from app.llm.extract import _parse, apply_operations
 from app.main import app
-from app.models import Item, coerce_changes, coerce_item
+from app.models import Item, coerce_changes, coerce_item, fmt_estimate
 
 
 @pytest.fixture(autouse=True)
@@ -224,6 +224,117 @@ def test_chat_stream_endpoint(client):
 
 def _zero():
     return {"added": 0, "completed": 0, "reopened": 0, "updated": 0, "deleted": 0}
+
+
+# ───────── 신규 스펙 항목 ─────────
+
+def test_estimate_displayed():
+    assert fmt_estimate(30) == "~30분"
+    assert fmt_estimate(90) == "~1시간 30분"
+    assert fmt_estimate(120) == "~2시간"
+    apply_operations([{"op": "add", "item": {"title": "보고서", "estimate_min": 90}}])
+    it = _all_items(views.build_calendar(store.all_items(), "all"))[0]
+    assert it["estimate"] == "~1시간 30분"
+
+
+def test_memo_idea_section():
+    apply_operations([
+        {"op": "add", "item": {"title": "책 추천 메모", "kind": "memo"}},
+        {"op": "add", "item": {"title": "앱 아이디어", "kind": "idea"}},
+    ])
+    v = views.build_calendar(store.all_items(), "all")
+    assert "memo" in _tones(v)
+    assert "nodate" not in _tones(v)  # 메모는 '날짜 미정'으로 새지 않음
+
+
+def test_deadline_drives_due_soon():
+    apply_operations([{"op": "add", "item": {
+        "title": "세금 신고", "kind": "todo", "deadline": _d(1)}}])  # 일정 날짜 없음, 마감만 내일
+    v = views.build_due_soon(store.all_items())
+    assert "세금 신고" in [i["title"] for i in _all_items(v)]
+    assert coerce_item({"title": "x", "deadline": _d(2)}).deadline == _d(2)
+
+
+def test_recurrence_advanced():
+    import datetime as _dt
+    item = lambda r: Item(title="x", kind="event", recurrence=r)  # noqa: E731
+    jun1, jun30 = _dt.date(2026, 6, 1), _dt.date(2026, 6, 30)
+    first_mon = {o.date for o in recurrence.occurrences(item("첫째 주 월요일"), jun1, jun30)}
+    assert first_mon == {"2026-06-01"}                  # 6/1이 월요일
+    last_fri = {o.date for o in recurrence.occurrences(item("마지막 금요일"), jun1, jun30)}
+    assert last_fri == {"2026-06-26"}                   # 6월 마지막 금요일
+    biweekly = recurrence.occurrences(item("격주 수요일"), jun1, jun30)
+    assert biweekly and all(_dt.date.fromisoformat(o.date).weekday() == 2 for o in biweekly)
+
+
+def test_overlap_conflict_by_duration():
+    apply_operations([
+        {"op": "add", "item": {"title": "회의", "kind": "event", "date": _d(0),
+                               "time": "10:00", "estimate_min": 90}},   # 10:00~11:30
+        {"op": "add", "item": {"title": "통화", "kind": "event", "date": _d(0),
+                               "time": "11:00", "estimate_min": 30}},   # 11:00~11:30 겹침
+    ])
+    conflicts = views.detect_conflicts(store.all_items())
+    assert len(conflicts) == 1 and len(conflicts[0][1]) == 2
+
+
+def test_format_views_and_aliases():
+    apply_operations([{"op": "add", "item": {"title": "운동", "kind": "todo"}}])
+    assert menu.is_menu("표로") and menu.is_menu("체크리스트") and menu.is_menu("요약")
+    assert menu.render("표로")["title"] == "표 보기"
+    assert menu.render("체크리스트")["title"] == "체크리스트"
+    assert menu.render("요약")["title"] == "요약"
+
+
+def test_project_nesting_depth():
+    apply_operations([{"op": "add", "item": {"title": "면접 준비", "project": "면접"}}])
+    parent_id = store.all_items()[0].id
+    apply_operations([
+        {"op": "add", "item": {"title": "기업 조사", "project": "면접",
+                               "parent_id": parent_id, "sort_order": 1}},
+        {"op": "add", "item": {"title": "예상 질문", "project": "면접",
+                               "parent_id": parent_id, "sort_order": 2}},
+    ])
+    v = views.build_projects(store.all_items())
+    rows = _all_items(v)
+    depths = {r["title"]: r["depth"] for r in rows}
+    assert depths["면접 준비"] == 0
+    assert depths["기업 조사"] == 1 and depths["예상 질문"] == 1
+
+
+def test_onboarding_trigger():
+    assert menu.is_menu("정보 템플릿 요청")
+    assert menu.render("정보 템플릿 요청")["title"] == "정보 템플릿"
+
+
+def test_set_profile(tmp_path, monkeypatch):
+    monkeypatch.setattr(profile, "PROFILE_PATH", tmp_path / "profile.json")
+    apply_operations([{"op": "set_profile", "profile": {
+        "name": "홍길동", "role": "개발자", "categories": "업무/건강"}}])
+    prof = profile.load()
+    assert prof["name"] == "홍길동" and prof["role"] == "개발자"
+    assert prof["categories"] == ["업무", "건강"]
+    assert "홍길동" in profile.as_context()
+
+
+def test_migration_adds_columns(tmp_path, monkeypatch):
+    import sqlite3
+    db = tmp_path / "old.db"
+    # 구버전 스키마: deadline/parent_id/sort_order 만 빠진 상태
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, "
+        "kind TEXT NOT NULL DEFAULT 'todo', date TEXT, time TEXT, category TEXT, "
+        "priority TEXT, recurrence TEXT, project TEXT, location TEXT, people TEXT, "
+        "estimate_min INTEGER, status TEXT NOT NULL DEFAULT 'open', "
+        "needs_review INTEGER NOT NULL DEFAULT 0, review_reason TEXT, "
+        "created_at TEXT NOT NULL DEFAULT (datetime('now')))")
+    con.commit()
+    con.close()
+    monkeypatch.setattr(store, "DB_PATH", db)
+    store.init()  # 마이그레이션 수행
+    store.add(Item(title="t", deadline=_d(1), parent_id=None, sort_order=3))
+    assert store.all_items()[0].deadline == _d(1)
 
 
 @pytest.fixture

@@ -12,6 +12,10 @@ from . import timeutil
 # 프롬프트 §9 카테고리
 CATEGORIES = ["업무", "학업", "건강", "개인", "가족", "재무", "취미", "여행", "인간관계", "기타"]
 
+# §4/§5 항목 종류: 일정/할 일/메모/아이디어
+KINDS = ["event", "todo", "memo", "idea"]
+KIND_LABEL = {"event": "일정", "todo": "할 일", "memo": "메모", "idea": "아이디어"}
+
 # 프롬프트 §10 우선순위 (정렬용 가중치 + 표시 이모지)
 PRIORITY_RANK = {"very_high": 0, "high": 1, "medium": 2, "low": 3}
 PRIORITY_EMOJI = {"very_high": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
@@ -31,6 +35,9 @@ class Item:
     location: str | None = None
     people: str | None = None
     estimate_min: int | None = None  # §11 예상 소요시간(분)
+    deadline: str | None = None  # §4 마감일 YYYY-MM-DD (일정 날짜와 별개)
+    parent_id: int | None = None  # §12 프로젝트 하위 단계의 상위 항목
+    sort_order: int = 0  # §12 하위 단계 순서
     status: str = "open"  # open | done
     needs_review: bool = False  # §14 확인 필요
     review_reason: str | None = None
@@ -45,6 +52,15 @@ class Item:
     @property
     def rank(self) -> int:
         return PRIORITY_RANK.get(self.priority or "medium", 2)
+
+    @property
+    def deadline_obj(self) -> dt.date | None:
+        return timeutil.parse_date(self.deadline)
+
+    @property
+    def due_obj(self) -> dt.date | None:
+        """마감 임박 계산용 — deadline 우선, 없으면 일정 date."""
+        return self.deadline_obj or self.date_obj
 
     def to_row(self) -> dict[str, Any]:
         d = asdict(self)
@@ -68,12 +84,14 @@ def coerce_item(raw: dict[str, Any]) -> Item:
         return v
 
     title = _as_str(raw.get("title")) or ""
-    kind = pick("kind", ["event", "todo"]) or "todo"
+    kind = pick("kind", KINDS) or "todo"
     date = pick("date")
     if date and not timeutil.parse_date(date):  # 형식 틀리면 날짜 미정
         date = None
+    deadline = pick("deadline")
+    if deadline and not timeutil.parse_date(deadline):
+        deadline = None
     time = pick("time")
-    est = raw.get("estimate_min")
     return Item(
         title=title,
         kind=kind,
@@ -85,10 +103,22 @@ def coerce_item(raw: dict[str, Any]) -> Item:
         project=pick("project"),
         location=pick("location"),
         people=pick("people"),
-        estimate_min=_as_int(est),
+        estimate_min=_as_int(raw.get("estimate_min")),
+        deadline=deadline,
+        parent_id=_as_int(raw.get("parent_id")),
         needs_review=_as_bool(raw.get("needs_review")),
         review_reason=pick("review_reason"),
     )
+
+
+def fmt_estimate(minutes: int | None) -> str | None:
+    """분 단위 예상 소요시간을 사람이 읽기 쉬운 표기로(§11)."""
+    if not minutes or minutes <= 0:
+        return None
+    if minutes < 60:
+        return f"~{minutes}분"
+    h, m = divmod(minutes, 60)
+    return f"~{h}시간" + (f" {m}분" if m else "")
 
 
 # 부분 업데이트(changes) 검증 — coerce_item과 동일한 필드 규칙을 재사용.
@@ -102,14 +132,20 @@ def coerce_changes(changes: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for k, v in changes.items():
         if k == "kind":
-            if v in ("event", "todo"):
+            if v in KINDS:
                 out[k] = v
-        elif k == "date":
+        elif k in ("date", "deadline"):
             s = _as_str(v)
             if v is None:
-                out[k] = None                  # 날짜 미정으로 비우기 허용
+                out[k] = None                  # 비우기 허용
             elif s and timeutil.parse_date(s):
                 out[k] = s
+        elif k == "parent_id":
+            out[k] = _as_int(v)
+        elif k == "sort_order":
+            n = _as_int(v)
+            if n is not None:
+                out[k] = n
         elif k == "time":
             s = _as_str(v)
             if v is None:

@@ -25,15 +25,23 @@ _OTHER_VIEWS: dict[str, Callable[[list], dict]] = {
     "⚠️ 확인 필요": views.build_review,
 }
 
+# §7 임의 포맷 — 사용자가 자연어로 치는 짧은 형식 전환어(별칭)
+_ALIASES: dict[str, Callable[[list], dict]] = {
+    "표": views.build_table, "표로": views.build_table, "테이블": views.build_table,
+    "체크리스트": views.build_checklist, "체크리스트로": views.build_checklist,
+    "요약": views.build_summary, "요약해서": views.build_summary, "요약 보기": views.build_summary,
+}
+
 MENU_LABELS = set(_SCOPE_VIEWS) | set(_OTHER_VIEWS) | {"🔄 날짜 갱신"}
 
 
 def is_menu(text: str) -> bool:
-    return text.strip() in MENU_LABELS
+    t = text.strip()
+    return t in MENU_LABELS or t in _ALIASES or t in _ONBOARDING
 
 
 def render(text: str) -> dict[str, Any]:
-    """메뉴 라벨에 해당하는 구조화된 보기(view dict)를 상태에서 생성."""
+    """메뉴 라벨/별칭에 해당하는 구조화된 보기(view dict)를 상태에서 생성."""
     text = text.strip()
     if text == "🔄 날짜 갱신":
         return views.build_date_refresh()
@@ -42,4 +50,12 @@ def render(text: str) -> dict[str, Any]:
         return views.build_calendar(items, scope=_SCOPE_VIEWS[text])
     if text in _OTHER_VIEWS:
         return _OTHER_VIEWS[text](items)
+    if text in _ALIASES:
+        return _ALIASES[text](items)
+    if text in _ONBOARDING:
+        return views.build_onboarding()
     return views.build_calendar(items, scope="all")
+
+
+# §23 정보 템플릿 트리거
+_ONBOARDING = {"정보 템플릿 요청", "정보 템플릿", "프로필 설정"}

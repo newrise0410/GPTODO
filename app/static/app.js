@@ -58,6 +58,7 @@ function priorityDot(p) {
 
 function itemRow(it) {
   const row = el("div", "item" + (it.done ? " done" : ""));
+  if (it.depth) row.style.marginLeft = it.depth * 1.1 + "rem"; // §12 하위 단계 들여쓰기
   // 완료 토글 체크(클릭 가능)
   const check = el("span", "check", it.done ? "✓" : "○");
   if (it.id != null) {
@@ -73,6 +74,8 @@ function itemRow(it) {
   title.textContent = (it.date ? it.date + "  " : "") + it.title;
   row.appendChild(title);
   if (it.recurrence) row.appendChild(el("span", "badge", "🔁 " + it.recurrence));
+  if (it.deadline) row.appendChild(el("span", "badge", "📌 " + it.deadline));
+  if (it.estimate) row.appendChild(el("span", "badge", "⏱ " + it.estimate));
   if (it.location) row.appendChild(el("span", "badge", "@" + it.location));
   if (it.note) row.appendChild(el("span", "note", it.note));
   return row;

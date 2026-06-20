@@ -35,6 +35,19 @@ def _weekdays_in(text: str) -> set[int]:
     return days
 
 
+# §15 주차 서수: '첫째 주 월요일', '마지막 금요일', '격주 수요일' 등
+_ORDINALS = {
+    "첫째": 1, "첫번째": 1, "첫 번째": 1, "둘째": 2, "두번째": 2, "두 번째": 2,
+    "셋째": 3, "세번째": 3, "세 번째": 3, "넷째": 4, "네번째": 4, "네 번째": 4,
+    "다섯째": 5, "다섯번째": 5,
+}
+
+
+def _days_in_month(d: dt.date) -> int:
+    nxt = (d.replace(day=1) + dt.timedelta(days=32)).replace(day=1)
+    return (nxt - dt.timedelta(days=1)).day
+
+
 def _matches(text: str, d: dt.date) -> bool:
     if "매일" in text:
         return True
@@ -44,11 +57,21 @@ def _matches(text: str, d: dt.date) -> bool:
         return d.weekday() >= 5
     if "매월" in text:
         m = re.search(r"(\d{1,2})\s*일", text)
-        return bool(m) and d.day == int(m.group(1))
+        if m:
+            return d.day == int(m.group(1))
+        # 숫자 없는 '매월 첫째 주 월요일' 등은 아래 요일/주차 로직으로 넘어간다.
     days = _weekdays_in(text)
-    if ("매주" in text or "마다" in text) and days:
-        return d.weekday() in days
-    return False
+    if not days or d.weekday() not in days:
+        return False
+    # 여기부터 요일은 일치 — 빈도/주차 조건만 본다.
+    if "마지막" in text:
+        return d.day + 7 > _days_in_month(d)
+    for word, n in _ORDINALS.items():
+        if word in text:
+            return (n - 1) * 7 < d.day <= n * 7
+    if "격주" in text:
+        return d.isocalendar()[1] % 2 == 0
+    return True  # 매주/마다/요일만 → 매주
 
 
 def is_parseable(text: str | None) -> bool:
@@ -56,7 +79,7 @@ def is_parseable(text: str | None) -> bool:
         return False
     if any(k in text for k in ("매일", "평일", "주말", "매월")):
         return True
-    return bool(_weekdays_in(text)) and ("매주" in text or "마다" in text)
+    return bool(_weekdays_in(text))
 
 
 def occurrences(item: Item, lo: dt.date, hi: dt.date) -> list[Item]:

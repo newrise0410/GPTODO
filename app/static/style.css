@@ -27,6 +27,7 @@
 .tone-date     { --tone: #7aa2ff; }
 .tone-nodate   { --tone: #e0a23c; }
 .tone-recurring{ --tone: #a679f0; }
+.tone-memo     { --tone: #9aa0a6; }
 .tone-conflict { --tone: #f0655e; }
 .tone-review   { --tone: #f0655e; }
 .tone-category { --tone: #4db6a4; }

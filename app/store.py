@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS items (
     location     TEXT,
     people       TEXT,
     estimate_min INTEGER,
+    deadline     TEXT,
+    parent_id    INTEGER,
+    sort_order   INTEGER NOT NULL DEFAULT 0,
     status       TEXT NOT NULL DEFAULT 'open',
     needs_review INTEGER NOT NULL DEFAULT 0,
     review_reason TEXT,
@@ -38,8 +41,15 @@ CREATE TABLE IF NOT EXISTS items (
 
 _COLS = [
     "title", "kind", "date", "time", "category", "priority", "recurrence",
-    "project", "location", "people", "estimate_min", "status",
-    "needs_review", "review_reason",
+    "project", "location", "people", "estimate_min", "deadline", "parent_id",
+    "sort_order", "status", "needs_review", "review_reason",
+]
+
+# 기존 DB에 없을 수 있는 컬럼 → ALTER TABLE로 보강(가벼운 마이그레이션).
+_MIGRATIONS = [
+    ("deadline", "deadline TEXT"),
+    ("parent_id", "parent_id INTEGER"),
+    ("sort_order", "sort_order INTEGER NOT NULL DEFAULT 0"),
 ]
 
 
@@ -55,6 +65,10 @@ def _conn() -> sqlite3.Connection:
 def init() -> None:
     with _conn() as conn:
         conn.executescript(SCHEMA)
+        existing = {r["name"] for r in conn.execute("PRAGMA table_info(items)")}
+        for col, ddl in _MIGRATIONS:
+            if col not in existing:
+                conn.execute(f"ALTER TABLE items ADD COLUMN {ddl}")
 
 
 def _scalar(v):

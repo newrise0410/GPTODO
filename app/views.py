@@ -183,6 +183,15 @@ def build_calendar(items: list[Item], scope: str = "all") -> dict[str, Any]:
     if conflict:
         sections.append(conflict)
 
+    # 완료 항목(되살리기·삭제용) — 최근 것부터, 최대 20개
+    done_items = [i for i in items if i.status == "done"]
+    if scope != "all":
+        done_items = [i for i in done_items if i.date_obj is None or timeutil.in_scope(i.date_obj, scope, ref)]
+    done_items = sorted(done_items, key=lambda i: i.id or 0, reverse=True)[:20]
+    if done_items:
+        rows = [_item_view(i, with_date=bool(i.date)) for i in done_items]
+        sections.append(_section(f"완료 ({len(done_items)})", "done", items=rows))
+
     if not sections:
         sections.append(_section("", "empty",
                                  lines=["아직 정리된 항목이 없어요. 자유롭게 적어주시면 캘린더로 정리해드릴게요."]))

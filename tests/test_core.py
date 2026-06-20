@@ -474,6 +474,38 @@ def test_date_expr_overrides_model_date():
         timeutil.today() + __import__("datetime").timedelta(days=1)).isoformat()
 
 
+def test_done_items_shown_for_reopen():
+    apply_operations([{"op": "add", "item": {"title": "운동", "kind": "todo"}}])
+    iid = store.all_items()[0].id
+    apply_operations([{"op": "complete", "id": iid}])
+    v = views.build_calendar(store.all_items(), "all")
+    assert "done" in _tones(v)  # 완료 섹션이 보여야 되살릴 수 있음
+    done_titles = [i["title"] for s in v["sections"] if s["tone"] == "done" for i in s["items"]]
+    assert "운동" in done_titles
+
+
+def test_delete_and_update_endpoints(client):
+    apply_operations([{"op": "add", "item": {"title": "초안", "kind": "todo"}}])
+    iid = store.all_items()[0].id
+    # 수정
+    r = client.post(f"/api/items/{iid}/update", json={"changes": {"title": "최종본"}})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert store.get(iid).title == "최종본"
+    # 삭제
+    assert client.post(f"/api/items/{iid}/delete").status_code == 200
+    assert store.get(iid) is None
+    assert client.post(f"/api/items/{iid}/delete").status_code == 404  # 이미 없음
+
+
+def test_reopen_via_toggle(client):
+    apply_operations([{"op": "add", "item": {"title": "장보기"}}])
+    iid = store.all_items()[0].id
+    apply_operations([{"op": "complete", "id": iid}])
+    assert store.get(iid).status == "done"
+    client.post(f"/api/items/{iid}/toggle")            # 되살리기
+    assert store.get(iid).status == "open"
+
+
 @pytest.fixture
 def client():
     return TestClient(app)

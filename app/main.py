@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from . import menu, store, timeutil, views
 from .llm import CodexAuthError, apply_operations, extract, stream
+from .models import coerce_changes
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -162,6 +163,27 @@ def api_toggle(item_id: int):
         raise HTTPException(status_code=404, detail="항목을 찾을 수 없어요.")
     store.set_status(item_id, "open" if it.status == "done" else "done")
     return {"view": views.build_calendar(store.all_items(), scope="all")}
+
+
+@app.post("/api/items/{item_id}/delete")
+def api_delete(item_id: int):
+    """항목 삭제."""
+    if not store.delete(item_id):
+        raise HTTPException(status_code=404, detail="항목을 찾을 수 없어요.")
+    return {"ok": True}
+
+
+class ItemChanges(BaseModel):
+    changes: dict
+
+
+@app.post("/api/items/{item_id}/update")
+def api_update(item_id: int, body: ItemChanges):
+    """항목 직접 수정(제목/시간/날짜 등). 검증 후 적용."""
+    if store.get(item_id) is None:
+        raise HTTPException(status_code=404, detail="항목을 찾을 수 없어요.")
+    n = store.update(item_id, coerce_changes(body.changes))
+    return {"ok": n > 0}
 
 
 @app.get("/api/today")

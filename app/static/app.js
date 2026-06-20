@@ -91,7 +91,7 @@ function priorityDot(p) {
 function itemRow(it) {
   const row = el("div", "item" + (it.done ? " done" : ""));
   if (it.depth) row.style.marginLeft = it.depth * 1.1 + "rem"; // §12 하위 단계 들여쓰기
-  // 완료 토글 체크(클릭 가능)
+  // 완료 토글 체크(클릭 → 완료/되살리기)
   const check = el("span", "check", it.done ? "✓" : "○");
   if (it.id != null) {
     check.dataset.id = it.id;
@@ -100,16 +100,28 @@ function itemRow(it) {
   }
   row.appendChild(check);
   if (it.time) row.appendChild(el("span", "time", it.time));
+  if (it.date) row.appendChild(el("span", "date-label", it.date));
   const dot = priorityDot(it.priority);
   if (dot) row.appendChild(dot);
-  const title = el("span", "t");
-  title.textContent = (it.date ? it.date + "  " : "") + it.title;
+  // 제목(클릭 시 인라인 수정)
+  const title = el("span", "t", it.title);
+  if (it.id != null) {
+    title.dataset.id = it.id;
+    title.title = "클릭해서 제목 수정";
+  }
   row.appendChild(title);
   if (it.recurrence) row.appendChild(el("span", "badge", "🔁 " + it.recurrence));
   if (it.deadline) row.appendChild(el("span", "badge", "📌 " + it.deadline));
   if (it.estimate) row.appendChild(el("span", "badge", "⏱ " + it.estimate));
   if (it.location) row.appendChild(el("span", "badge", "@" + it.location));
   if (it.note) row.appendChild(el("span", "note", it.note));
+  // 삭제 버튼
+  if (it.id != null) {
+    const del = el("span", "del", "✕");
+    del.dataset.id = it.id;
+    del.title = "삭제";
+    row.appendChild(del);
+  }
   return row;
 }
 
@@ -226,24 +238,84 @@ function assistantContext(view) {
   return parts.join(" ");
 }
 
-// 완료 토글 — 클릭 행만 낙관적으로 갱신(서버는 영속화). 실패 시 되돌림.
+// 항목 직접 조작 — 완료/되살리기 토글, 삭제, 제목 수정 (낙관적 갱신)
 chatEl.addEventListener("click", async (e) => {
   const check = e.target.closest(".check[data-id]");
-  if (!check) return;
-  const id = check.dataset.id;
-  const wasDone = check.dataset.done === "1";
-  const row = check.closest(".item");
-  row.classList.toggle("done", !wasDone);
-  check.textContent = wasDone ? "○" : "✓";
-  check.dataset.done = wasDone ? "0" : "1";
-  try {
-    const res = await fetch(`/api/items/${id}/toggle`, { method: "POST" });
-    if (!res.ok) throw new Error();
-  } catch {
-    row.classList.toggle("done", wasDone); // 되돌림
-    check.textContent = wasDone ? "✓" : "○";
-    check.dataset.done = wasDone ? "1" : "0";
+  if (check) {
+    const id = check.dataset.id;
+    const wasDone = check.dataset.done === "1";
+    const row = check.closest(".item");
+    row.classList.toggle("done", !wasDone);
+    check.textContent = wasDone ? "○" : "✓";
+    check.dataset.done = wasDone ? "0" : "1";
+    try {
+      const res = await fetch(`/api/items/${id}/toggle`, { method: "POST" });
+      if (!res.ok) throw new Error();
+    } catch {
+      row.classList.toggle("done", wasDone);
+      check.textContent = wasDone ? "✓" : "○";
+      check.dataset.done = wasDone ? "1" : "0";
+    }
+    return;
   }
+
+  const del = e.target.closest(".del[data-id]");
+  if (del) {
+    const row = del.closest(".item");
+    const title = row.querySelector(".t")?.textContent || "이 항목";
+    if (!confirm(`'${title}' 삭제할까요?`)) return;
+    row.style.opacity = "0.4";
+    try {
+      const res = await fetch(`/api/items/${del.dataset.id}/delete`, { method: "POST" });
+      if (!res.ok) throw new Error();
+      row.remove();
+    } catch {
+      row.style.opacity = "";
+    }
+    return;
+  }
+});
+
+// 제목 클릭 → 인라인 수정
+chatEl.addEventListener("click", (e) => {
+  const t = e.target.closest(".t[data-id]");
+  if (!t || t.isContentEditable) return;
+  const original = t.textContent;
+  t.contentEditable = "true";
+  t.classList.add("editing");
+  t.focus();
+  // 캐럿 끝으로
+  const range = document.createRange();
+  range.selectNodeContents(t);
+  range.collapse(false);
+  const sel = getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+
+  const finish = async (save) => {
+    t.contentEditable = "false";
+    t.classList.remove("editing");
+    const next = t.textContent.trim();
+    if (!save || !next || next === original) {
+      t.textContent = original;
+      return;
+    }
+    try {
+      const res = await fetch(`/api/items/${t.dataset.id}/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ changes: { title: next } }),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      t.textContent = original;
+    }
+  };
+  t.onkeydown = (ev) => {
+    if (ev.key === "Enter") { ev.preventDefault(); t.blur(); }
+    if (ev.key === "Escape") { t.textContent = original; t.blur(); }
+  };
+  t.onblur = () => finish(true);
 });
 
 form.addEventListener("submit", (e) => {

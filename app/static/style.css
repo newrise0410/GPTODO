@@ -138,6 +138,13 @@ header {
 .item:hover .del { opacity: 1; }
 .item .del:hover { color: #f0655e; }
 .item .badge { color: var(--muted); font-size: .74rem; }
+.item .cal-btn {
+  flex: none; font-size: .7rem; color: var(--muted); text-decoration: none;
+  border: 1px solid var(--border); border-radius: 6px; padding: .02rem .3rem;
+  opacity: 0; transition: opacity .12s;
+}
+.item:hover .cal-btn { opacity: 1; }
+.item .cal-btn:hover { color: var(--accent); border-color: var(--accent); }
 .item .note {
   color: var(--tone); font-size: .74rem; margin-left: auto;
   background: var(--surface-2); border-radius: 6px; padding: .02rem .35rem;

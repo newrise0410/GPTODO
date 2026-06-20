@@ -10,7 +10,7 @@ import datetime as dt
 from collections import defaultdict
 from typing import Any
 
-from . import recurrence, timeutil
+from . import icalfeed, recurrence, timeutil
 from .models import KIND_LABEL, PRIORITY_EMOJI, Item, fmt_estimate
 
 
@@ -31,7 +31,14 @@ def _item_view(it: Item, *, with_date: bool = False, divider: str | None = None,
         "depth": depth,            # §12 프로젝트 하위 단계 들여쓰기
         "divider": divider,        # 카드 안에서 '시간 미정' 같은 소제목 구분
         "note": note,
+        "cal": _cal_info(it),      # 캘린더 연동(구글 링크 / .ics)
     }
+
+
+def _cal_info(it: Item) -> dict | None:
+    if it.id is None or not icalfeed.is_eligible(it):
+        return None
+    return {"gcal": icalfeed.google_url(it), "ics": f"/api/items/{it.id}/ics"}
 
 
 def _view(title: str, sections: list[dict], *, note: str | None = None,
@@ -361,6 +368,16 @@ def build_no_date(items: list[Item]) -> dict[str, Any]:
                  [_section("날짜 미정", "nodate", items=[_item_view(i) for i in nd])])
 
 
+def _calendar_blank_note(it: Item) -> str | None:
+    """캘린더에 넣으려면 빠진 정보(블랭크) — 일정/마감 할일 대상. 완전하면 None."""
+    if it.kind == "event":
+        if not it.date_obj and not it.recurrence:
+            return "날짜 필요 — 캘린더에 넣으려면"
+        if it.date_obj and not it.time:
+            return "시간 정할까요? (없으면 종일)"
+    return None
+
+
 def build_review(items: list[Item]) -> dict[str, Any]:
     open_items = [i for i in items if i.status != "done"]
     review = [i for i in open_items if i.needs_review]
@@ -368,6 +385,12 @@ def build_review(items: list[Item]) -> dict[str, Any]:
     if review:
         rows = [_item_view(it, with_date=True, note=it.review_reason) for it in review]
         sections.append(_section("확인 필요", "review", items=rows))
+    # 캘린더 연동 블랭크 → 질문 대상(§) : 일정/마감 할일이 date·time 비면 surface
+    flagged = {i.id for i in review}
+    blanks = [(i, n) for i in open_items if i.id not in flagged and (n := _calendar_blank_note(i))]
+    if blanks:
+        rows = [_item_view(it, with_date=True, note=note) for it, note in blanks]
+        sections.append(_section("캘린더 정보 필요", "ask", items=rows))
     conflict = _conflict_section(open_items)
     if conflict:
         sections.append(conflict)

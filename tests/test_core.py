@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app import dateresolve, menu, profile, recurrence, store, timeutil, views
+from app import dateresolve, icalfeed, menu, profile, recurrence, store, timeutil, views
 from app.llm.extract import _parse, apply_operations
 from app.main import app
 from app.models import Item, coerce_changes, coerce_item, fmt_estimate
@@ -530,6 +530,60 @@ def test_reopen_via_toggle(client):
     assert store.get(iid).status == "done"
     client.post(f"/api/items/{iid}/toggle")            # 되살리기
     assert store.get(iid).status == "open"
+
+
+def test_ical_feed_timed_and_allday():
+    apply_operations([
+        {"op": "add", "item": {"title": "면접", "kind": "event", "date": _d(1),
+                               "time": "15:00", "estimate_min": 90}},
+        {"op": "add", "item": {"title": "세금신고", "kind": "todo", "deadline": _d(2)}},
+        {"op": "add", "item": {"title": "그냥 할일", "kind": "todo"}},  # 캘린더 대상 아님
+    ])
+    ics = icalfeed.build(store.all_items())
+    assert "BEGIN:VCALENDAR" in ics and "END:VCALENDAR" in ics
+    assert ics.count("BEGIN:VEVENT") == 2          # 면접 + 세금신고(마감)만
+    assert "SUMMARY:면접" in ics
+    assert "SUMMARY:[마감] 세금신고" in ics
+    assert "그냥 할일" not in ics                   # 날짜·마감 없는 할일 제외
+    assert "DTSTART:" in ics and "DTSTART;VALUE=DATE:" in ics  # 시간있음/종일 둘 다
+
+
+def test_ical_feed_recurrence_expanded():
+    apply_operations([{"op": "add", "item": {
+        "title": "스탠드업", "kind": "event", "time": "09:00", "recurrence": "매일"}}])
+    ics = icalfeed.build(store.all_items())
+    assert ics.count("BEGIN:VEVENT") > 30          # 90일 구간으로 펼쳐짐
+
+
+def test_cal_info_in_item_view():
+    apply_operations([{"op": "add", "item": {
+        "title": "회의", "kind": "event", "date": _d(1), "time": "10:00"}}])
+    it = _all_items(views.build_calendar(store.all_items(), "all"))[0]
+    assert it["cal"] and it["cal"]["gcal"].startswith("https://calendar.google.com")
+    assert it["cal"]["ics"].endswith("/ics")
+
+
+def test_calendar_blank_surfaced_in_review():
+    # 날짜 없는 일정 → '캘린더 정보 필요'로 질문 대상
+    apply_operations([{"op": "add", "item": {"title": "면접", "kind": "event"}}])
+    v = views.build_review(store.all_items())
+    labels = [s["label"] for s in v["sections"]]
+    assert "캘린더 정보 필요" in labels
+
+
+def test_feed_and_ics_endpoints(client):
+    apply_operations([{"op": "add", "item": {
+        "title": "치과", "kind": "event", "date": _d(1), "time": "14:00"}}])
+    iid = store.all_items()[0].id
+    r = client.get("/calendar.ics")
+    assert r.status_code == 200 and "text/calendar" in r.headers["content-type"]
+    assert "SUMMARY:치과" in r.text
+    r2 = client.get(f"/api/items/{iid}/ics")
+    assert r2.status_code == 200 and "BEGIN:VEVENT" in r2.text
+    # 캘린더 대상 아닌 항목은 404
+    apply_operations([{"op": "add", "item": {"title": "메모", "kind": "todo"}}])
+    mid = [i for i in store.all_items() if i.title == "메모"][0].id
+    assert client.get(f"/api/items/{mid}/ics").status_code == 404
 
 
 @pytest.fixture

@@ -59,6 +59,18 @@ fetch("/api/messages")
   })
   .catch(() => {});
 
+// 캘린더 구독 — 피드 URL 복사 + 안내
+document.getElementById("subscribe").addEventListener("click", async () => {
+  const url = location.origin + "/calendar.ics";
+  try { await navigator.clipboard.writeText(url); } catch {}
+  alert(
+    "캘린더 구독 URL을 복사했어요:\n" + url + "\n\n" +
+    "• 애플 캘린더: 파일 → 새로운 캘린더 구독 → 붙여넣기\n" +
+    "• 구글 캘린더: 다른 캘린더 + → URL로 추가 → 붙여넣기\n\n" +
+    "구독하면 일정·마감이 자동으로 동기화됩니다(단방향)."
+  );
+});
+
 // 대화 비우기(항목/프로필은 유지)
 document.getElementById("clear").addEventListener("click", async () => {
   if (!confirm("대화 기록을 비울까요? (할 일/일정 항목은 그대로 유지됩니다)")) return;
@@ -115,6 +127,15 @@ function itemRow(it) {
   if (it.estimate) row.appendChild(el("span", "badge", "⏱ " + it.estimate));
   if (it.location) row.appendChild(el("span", "badge", "@" + it.location));
   if (it.note) row.appendChild(el("span", "note", it.note));
+  // 캘린더 연동: 구글 추가 링크 + .ics 다운로드
+  if (it.cal) {
+    const g = el("a", "cal-btn", "G");
+    g.href = it.cal.gcal; g.target = "_blank"; g.rel = "noopener"; g.title = "구글 캘린더에 추가";
+    const ics = el("a", "cal-btn", "↓ics");
+    ics.href = it.cal.ics; ics.title = "애플/아웃룩 등 .ics 다운로드";
+    row.appendChild(g);
+    row.appendChild(ics);
+  }
   // 삭제 버튼
   if (it.id != null) {
     const del = el("span", "del", "✕");

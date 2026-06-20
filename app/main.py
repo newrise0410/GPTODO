@@ -13,12 +13,12 @@ from pathlib import Path
 import json
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import menu, store, timeutil, views
+from . import icalfeed, menu, store, timeutil, views
 from .llm import CodexAuthError, apply_operations, extract, stream
 from .models import coerce_changes
 
@@ -184,6 +184,24 @@ def api_update(item_id: int, body: ItemChanges):
         raise HTTPException(status_code=404, detail="항목을 찾을 수 없어요.")
     n = store.update(item_id, coerce_changes(body.changes))
     return {"ok": n > 0}
+
+
+@app.get("/calendar.ics")
+def calendar_feed():
+    """애플/구글 캘린더 'URL 구독'용 iCal 피드(일정 + 마감 있는 할 일)."""
+    body = icalfeed.build(store.all_items())
+    return PlainTextResponse(body, media_type="text/calendar; charset=utf-8",
+                             headers={"Content-Disposition": 'inline; filename="gptodo.ics"'})
+
+
+@app.get("/api/items/{item_id}/ics")
+def item_ics(item_id: int):
+    """단일 일정 .ics 다운로드(애플/아웃룩 등에서 열기)."""
+    it = store.get(item_id)
+    if it is None or not icalfeed.is_eligible(it):
+        raise HTTPException(status_code=404, detail="캘린더에 넣을 수 있는 일정이 아니에요.")
+    return Response(icalfeed.single_ics(it), media_type="text/calendar; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="item-{item_id}.ics"'})
 
 
 @app.get("/api/today")

@@ -1,24 +1,29 @@
-# 🧠 LLM TO-DO
+# 🧠 지능형 정리사 (LLM TO-DO)
 
-자연어로 적으면 LLM이 구조화된 할 일로 정리해주는 FastAPI 웹앱.
+아무렇게나 적어도 LLM이 **캘린더 중심**으로 정리해주는 채팅 웹앱.
+일정·할 일·메모·아이디어를 구조화하고, 빠른 메뉴로 다양한 보기(오늘/이번 주/분류/프로젝트/대시보드)로 재구성한다.
+
 LLM 백엔드는 **Codex / ChatGPT OAuth**(`codex login`)를 우선 사용하고, 없으면 `OPENAI_API_KEY`로 폴백한다.
 
-> 예: "내일까지 보고서 초안 쓰고, 다음주 월요일에 치과 예약" →
-> ① 보고서 초안 (due: 내일) ② 치과 예약 (due: 다음주 월요일) 두 개의 할 일로 분리 저장.
+> 핵심 동작 규칙은 전부 `app/prompts/organizer.md` 시스템 프롬프트에 들어 있다.
+> KST 현재 날짜는 **서버에서 계산해 주입**하므로 LLM이 날짜를 추측하지 않는다.
 
 ## 구조
 
 ```
 app/
-  main.py          FastAPI 라우트 (/, /add, toggle, delete, /api/todos)
-  db.py            SQLite 저장소 (stdlib sqlite3)
+  main.py              FastAPI — / (채팅 UI), POST /api/chat, /api/today, /health
+  prompts/organizer.md '지능형 정리사' 시스템 프롬프트 (캘린더식 출력 + 빠른 메뉴 규칙)
   llm/
-    codex_oauth.py ~/.codex/auth.json 읽기 + 토큰 자동 갱신
-    client.py      자연어 → 할 일 JSON 파싱
-  templates/       Jinja2 (index.html)
-  static/          style.css
-data/todos.db      런타임 생성 (gitignore)
+    codex_oauth.py     ~/.codex/auth.json 읽기 + access_token 자동 갱신
+    client.py          KST 날짜 주입 + 대화 호출 (chat)
+  templates/index.html 채팅 + 고정 빠른 메뉴
+  static/app.js,style.css
 ```
+
+- **무상태 서버**: 대화 기록은 브라우저가 보관하고 매 요청마다 `messages`로 전송한다
+  (프롬프트 §19 "현재 대화 기준" 원칙 — 외부 저장 없음).
+- 빠른 메뉴 버튼(☀️ 오늘 / 📊 대시보드 / 🔄 날짜 갱신 …)을 누르면 그 라벨이 그대로 사용자 입력으로 전송된다.
 
 ## 실행
 
@@ -37,15 +42,16 @@ uv run uvicorn app.main:app --reload
 
 ## 동작 메모
 
-- **Codex OAuth**: `~/.codex/auth.json`의 `access_token`을 읽어 사용하며, JWT `exp`가 임박하면
+- **KST 날짜 주입**: `client._system_prompt()`가 `Asia/Seoul` 현재 날짜·요일을 계산해
+  시스템 메시지 상단에 넣는다. 상대 날짜(내일/이번 주 등)는 이 값을 기준으로 환산된다.
+- **Codex OAuth**: `~/.codex/auth.json`의 `access_token`을 읽어 쓰며, JWT `exp`가 임박하면
   `refresh_token`으로 자동 갱신 후 파일에 다시 저장한다.
-- ChatGPT OAuth 엔드포인트/모델명은 Codex 버전에 따라 바뀔 수 있어 `LLM_BASE_URL`,
-  `LLM_MODEL` 환경변수로 오버라이드 가능하게 분리해 두었다.
-- LLM 호출이 실패하면 입력 원문을 그대로 한 개의 할 일로 저장해 앱이 멈추지 않는다.
+- ChatGPT OAuth 엔드포인트/모델명은 Codex 버전에 따라 바뀔 수 있어
+  `LLM_BASE_URL`, `LLM_MODEL` 환경변수로 오버라이드 가능하게 분리해 두었다.
 
 ## TODO (다음 단계)
 
-- [ ] 자연어로 "완료 처리/삭제/수정"까지 (현재는 추가만 LLM)
-- [ ] 마감 임박 정렬·알림
-- [ ] HTMX로 새로고침 없는 토글
-- [ ] Codex OAuth 엔드포인트 실연결 검증
+- [ ] `codex login` 후 실제 LLM 호출 검증 (OAuth 엔드포인트/모델명 실연결)
+- [ ] 응답 스트리밍(SSE) — 긴 정리도 끊김 없이
+- [ ] 빠른 메뉴 응답의 마크다운(표/구분선) 렌더링
+- [ ] 선택적 대화 영속화 (현재는 새로고침 시 초기화)

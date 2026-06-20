@@ -1,73 +1,61 @@
-"""FastAPI 엔트리포인트 — LLM 할 일 웹앱."""
+"""FastAPI 엔트리포인트 — 지능형 정리사 채팅 앱.
+
+대화는 클라이언트가 보관하고 매 요청마다 history를 보낸다(서버 무상태).
+프롬프트 19번 규칙대로 외부 저장은 하지 않으며 '현재 대화 기준'으로 동작한다.
+"""
 
 from __future__ import annotations
 
-import datetime as dt
 from pathlib import Path
 
-from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 
-from . import db
-from .llm import CodexAuthError, parse_todos
+from .llm import CodexAuthError, chat, date_header
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="LLM TO-DO")
+app = FastAPI(title="LLM 정리사")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-# 임포트 시점에 스키마 보장 — uvicorn/TestClient 양쪽 모두에서 안전.
-db.init()
+
+class Message(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    messages: list[Message]
 
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    todos = db.list_todos()
-    return templates.TemplateResponse(
-        request, "index.html", {"todos": todos}
-    )
+    return templates.TemplateResponse(request, "index.html", {})
 
 
-@app.post("/add")
-def add(text: str = Form(...)):
-    """자연어 입력을 LLM으로 파싱해 할 일들을 저장."""
-    today = dt.date.today().isoformat()
+@app.post("/api/chat")
+def api_chat(req: ChatRequest):
+    history = [{"role": m.role, "content": m.content} for m in req.messages]
+    # 사용자/어시스턴트 메시지만 전달(시스템 프롬프트는 서버에서 주입).
+    history = [m for m in history if m["role"] in ("user", "assistant")]
+    if not history or history[-1]["role"] != "user":
+        raise HTTPException(status_code=400, detail="마지막 메시지는 user여야 합니다.")
     try:
-        parsed = parse_todos(text, today=today)
+        reply = chat(history)
     except CodexAuthError as e:
         raise HTTPException(status_code=401, detail=str(e)) from e
-    except Exception:
-        # LLM 실패 시 입력 원문을 그대로 저장(앱이 멈추지 않게).
-        parsed = [{"title": text.strip(), "priority": "medium", "due": None, "tags": []}]
-
-    for t in parsed:
-        db.add_todo(
-            title=t.get("title", "").strip() or text.strip(),
-            priority=t.get("priority", "medium"),
-            due=t.get("due"),
-            tags=t.get("tags", []),
-        )
-    return RedirectResponse("/", status_code=303)
+    except Exception as e:  # noqa: BLE001 — 프런트에 원인 전달
+        raise HTTPException(status_code=502, detail=f"LLM 호출 실패: {e}") from e
+    return {"reply": reply}
 
 
-@app.post("/todos/{todo_id}/toggle")
-def toggle(todo_id: int, done: bool = Form(...)):
-    db.set_done(todo_id, done)
-    return RedirectResponse("/", status_code=303)
-
-
-@app.post("/todos/{todo_id}/delete")
-def remove(todo_id: int):
-    db.delete_todo(todo_id)
-    return RedirectResponse("/", status_code=303)
-
-
-@app.get("/api/todos")
-def api_todos():
-    return JSONResponse(db.list_todos())
+@app.get("/api/today")
+def api_today():
+    return {"date_header": date_header()}
 
 
 @app.get("/health")

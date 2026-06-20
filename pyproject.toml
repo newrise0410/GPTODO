@@ -1,7 +1,7 @@
 [project]
 name = "llm-to-do"
 version = "0.1.0"
-description = "LLM 자연어로 관리하는 할 일 웹앱 (Codex/GPT OAuth 백엔드)"
+description = "지능형 정리사 — 자연어를 캘린더 중심으로 정리하는 채팅 웹앱 (Codex/GPT OAuth 백엔드)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -9,7 +9,6 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "httpx>=0.27",
     "jinja2>=3.1",
-    "python-multipart>=0.0.9",
     "openai>=1.40",
     "pydantic>=2.7",
 ]

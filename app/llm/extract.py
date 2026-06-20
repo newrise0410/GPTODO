@@ -63,7 +63,9 @@ item/changes 속성:
 2) 한 문장에 여러 항목이 있으면 각각 분리해 add 한다. 단순 적어두기/생각은 kind="memo"/"idea".
 3) 완료/끝냈어/했어 → complete. 삭제/취소 → delete. 시간·내용 변경 → update.
    대상이 여러 개라 모호하면 연산하지 말고 questions로 물어라.
-3-1) 사용자가 이름/직업/선호 카테고리/정리 방식을 알려주면 set_profile로 저장한다.
+3-1) **직전에 네가 확인 질문(예: 시간/날짜)을 했고 사용자가 그 답을 주면, 새로 add하지 마라.**
+   현재 항목 목록에서 해당 항목을 찾아 그 id로 update 한다(예: time만 채움). 같은 항목을 또 add하면 중복이다.
+3-2) 사용자가 이름/직업/선호 카테고리/정리 방식을 알려주면 set_profile로 저장한다.
 4) 보기 전환(오늘/이번 주/대시보드/표/체크리스트/요약 등)은 네가 처리하지 않는다 — 그런 요청이면 operations는 비우고 수신 확인만.
 5) 저장했다고 단정하지 마라("정리했어요" 정도).
 """
@@ -180,13 +182,41 @@ def _as_id(v: Any) -> int | None:
         return None
 
 
+# 병합 대상 필드 — 기존 항목이 비어 있으면 새 add의 값으로 채운다(중복 방지).
+_MERGE_FIELDS = ["time", "date", "deadline", "category", "priority",
+                 "recurrence", "project", "location", "people", "estimate_min"]
+
+
+def _norm_title(t: str) -> str:
+    return " ".join((t or "").split()).lower()
+
+
+def _merge_changes(existing: Item, new: Item) -> dict[str, Any]:
+    """기존 항목의 빈 필드를 새 항목 값으로 채우는 변경분. 빈 값(없으면 dict 비움)."""
+    changes: dict[str, Any] = {}
+    for f in _MERGE_FIELDS:
+        nv = getattr(new, f)
+        if nv not in (None, "") and getattr(existing, f) in (None, ""):
+            changes[f] = nv
+    if "time" in changes and new.kind == "event":
+        changes["kind"] = "event"          # 시간이 채워지면 일정으로
+    if changes and existing.needs_review:
+        changes["needs_review"] = new.needs_review  # 답변으로 모호함 해소
+    return changes
+
+
 def apply_operations(operations: Any) -> dict[str, int]:
     """LLM 연산을 검증·정규화한 뒤 단일 트랜잭션으로 적용. rowcount 기반 카운트 반환.
 
     잘못된 op(문자열/누락 필드/없는 id 등)는 조용히 건너뛰며, 절대 예외를 던지지 않는다.
     실제로 변경된 항목만 카운트된다(없는 id 완료/삭제는 0).
+
+    중복 방지: 확인 질문에 답해 같은 항목을 다시 add하면(같은 제목·호환 날짜),
+    새로 만들지 않고 기존 항목의 빈 필드를 채워 update한다.
     """
     norm: list[tuple] = []
+    open_items = [i for i in store.all_items() if i.status != "done"]
+    claimed: set[int] = set()
     if isinstance(operations, list):
         for op in operations:
             if not isinstance(op, dict):
@@ -196,10 +226,23 @@ def apply_operations(operations: Any) -> dict[str, int]:
                 item = op.get("item")
                 if isinstance(item, dict):
                     it = coerce_item(item)
-                    if it.title:
-                        ref = (str(item.get("ref")).strip() or None) if item.get("ref") else None
-                        parent_ref = (str(item.get("parent_ref")).strip() or None
-                                      if item.get("parent_ref") else None)
+                    if not it.title:
+                        continue
+                    ref = (str(item.get("ref")).strip() or None) if item.get("ref") else None
+                    parent_ref = (str(item.get("parent_ref")).strip() or None
+                                  if item.get("parent_ref") else None)
+                    match = None
+                    if not ref and not parent_ref:  # 분해 단계는 병합 제외
+                        nt = _norm_title(it.title)
+                        match = next((e for e in open_items if e.id not in claimed
+                                      and _norm_title(e.title) == nt
+                                      and not (e.date and it.date and e.date != it.date)), None)
+                    if match is not None:
+                        claimed.add(match.id)
+                        changes = _merge_changes(match, it)
+                        if changes:  # 새 정보가 있으면 update, 없으면 완전 중복이라 skip
+                            norm.append(("update", match.id, changes))
+                    else:
                         norm.append(("add", it, ref, parent_ref))
             elif kind == "set_profile":
                 if isinstance(op.get("profile"), dict):

@@ -474,6 +474,32 @@ def test_date_expr_overrides_model_date():
         timeutil.today() + __import__("datetime").timedelta(days=1)).isoformat()
 
 
+def test_clarification_answer_merges_not_duplicates():
+    # 1턴: 시간 미정으로 면접 등록(확인 필요)
+    apply_operations([{"op": "add", "item": {
+        "title": "면접", "kind": "event", "date": _d(1),
+        "needs_review": True, "review_reason": "시간 미정"}}])
+    # 2턴: 시간을 답하면 LLM이 (잘못) 다시 add 해도 → 중복 대신 기존 항목에 병합
+    apply_operations([{"op": "add", "item": {
+        "title": "면접", "kind": "event", "date": _d(1), "time": "15:00"}}])
+    items = [i for i in store.all_items() if i.title == "면접"]
+    assert len(items) == 1                      # 중복 안 생김
+    assert items[0].time == "15:00"             # 시간 채워짐
+    assert items[0].needs_review is False       # 모호함 해소
+
+
+def test_merge_skips_exact_duplicate():
+    apply_operations([{"op": "add", "item": {"title": "운동", "kind": "todo"}}])
+    apply_operations([{"op": "add", "item": {"title": "운동", "kind": "todo"}}])
+    assert len([i for i in store.all_items() if i.title == "운동"]) == 1
+
+
+def test_merge_keeps_different_dates_separate():
+    apply_operations([{"op": "add", "item": {"title": "회의", "kind": "event", "date": _d(0)}}])
+    apply_operations([{"op": "add", "item": {"title": "회의", "kind": "event", "date": _d(3)}}])
+    assert len([i for i in store.all_items() if i.title == "회의"]) == 2  # 날짜 다르면 별개
+
+
 def test_done_items_shown_for_reopen():
     apply_operations([{"op": "add", "item": {"title": "운동", "kind": "todo"}}])
     iid = store.all_items()[0].id

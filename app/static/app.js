@@ -59,29 +59,63 @@ fetch("/api/messages")
   })
   .catch(() => {});
 
+// 구글 연결 인라인 폼 — client_id/secret을 입력칸에 붙여넣기(사라지지 않음)
+function showGoogleConnectForm() {
+  const wrap = el("div", "msg assistant");
+  const card = el("div", "card tone-summary setup");
+  card.appendChild(el("div", "card-h", "구글 캘린더 연결 (한 번만)"));
+  const steps = [
+    "1. Google Cloud Console → 사용자 인증 정보 → OAuth 클라이언트 ID 만들기",
+    "2. 유형 '데스크톱 앱' 선택 (리디렉션 URI 등록 불필요)",
+    "3. 'Google Calendar API' 사용 설정",
+    "4. 만든 Client ID / Secret을 아래에 붙여넣고 연결",
+  ];
+  steps.forEach((s) => card.appendChild(el("div", "line", s)));
+
+  const idIn = el("input", "setup-input");
+  idIn.placeholder = "Client ID (xxxx.apps.googleusercontent.com)";
+  const secIn = el("input", "setup-input");
+  secIn.placeholder = "Client secret";
+  const row = el("div", "setup-actions");
+  const btn = el("button", "setup-btn", "연결");
+  const msg = el("span", "setup-msg");
+  row.appendChild(btn);
+  row.appendChild(msg);
+  card.appendChild(idIn);
+  card.appendChild(secIn);
+  card.appendChild(row);
+  wrap.appendChild(card);
+  chatEl.appendChild(wrap);
+  chatEl.scrollTop = chatEl.scrollHeight;
+  idIn.focus();
+
+  btn.addEventListener("click", async () => {
+    const cid = idIn.value.trim();
+    const secret = secIn.value.trim();
+    if (!cid || !secret) { msg.textContent = "둘 다 입력해주세요."; return; }
+    btn.disabled = true;
+    msg.textContent = "저장 중…";
+    try {
+      const r = await fetch("/api/google/credentials", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: cid, client_secret: secret }),
+      });
+      if (!r.ok) throw new Error();
+      location.href = "/oauth/google/start"; // 구글 로그인으로
+    } catch {
+      btn.disabled = false;
+      msg.textContent = "저장 실패 — 다시 시도해주세요.";
+    }
+  });
+}
+
 // 구글 캘린더 양방향 동기화
 document.getElementById("sync").addEventListener("click", async () => {
   const btn = document.getElementById("sync");
   const st = await fetch("/api/sync/status").then((r) => r.json()).catch(() => null);
   if (!st) return;
   if (!st.configured) {
-    if (!confirm(
-      "구글 연동은 한 번만 OAuth 클라이언트를 만들면 돼요(데스크톱 앱 유형, 리디렉션 등록 불필요).\n\n" +
-      "Google Cloud Console → API 및 서비스 → 사용자 인증 정보 →\n" +
-      "  '사용자 인증 정보 만들기' → OAuth 클라이언트 ID → 유형 '데스크톱 앱'\n" +
-      "그리고 'Google Calendar API'를 사용 설정.\n\n" +
-      "만든 client_id / secret을 이어서 붙여넣을게요. 계속할까요?"
-    )) return;
-    const cid = prompt("Client ID 붙여넣기 (xxxx.apps.googleusercontent.com):");
-    if (!cid) return;
-    const secret = prompt("Client secret 붙여넣기:");
-    if (!secret) return;
-    const r = await fetch("/api/google/credentials", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ client_id: cid.trim(), client_secret: secret.trim() }),
-    });
-    if (!r.ok) { alert("저장 실패"); return; }
-    location.href = "/oauth/google/start"; // 바로 구글 로그인
+    showGoogleConnectForm();   // prompt 대신 인라인 폼(복붙해도 안 사라짐)
     return;
   }
   if (!st.authed) {

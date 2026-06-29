@@ -462,11 +462,13 @@ def test_dateresolver():
 
 
 def test_date_expr_overrides_model_date():
-    # 모델이 금요일을 06-27로 틀려도, deadline_expr로 코드가 06-26로 교정
-    it = coerce_item({"title": "세금신고", "deadline": "2026-06-27", "deadline_expr": "금요일"})
-    assert it.deadline == "2026-06-26"
+    # 코드가 푼 '금요일'(실행일 기준 다가오는 금요일)은 실행 날짜와 무관하게 같아야 한다.
+    friday = dateresolve.resolve("금요일", timeutil.today()).isoformat()
+    # 모델이 금요일을 엉뚱하게 틀려도, deadline_expr로 코드가 교정
+    it = coerce_item({"title": "세금신고", "deadline": "1999-01-01", "deadline_expr": "금요일"})
+    assert it.deadline == friday
     # date_expr도 동일
-    assert coerce_item({"title": "x", "date": "2026-06-23", "date_expr": "금요일"}).date == "2026-06-26"
+    assert coerce_item({"title": "x", "date": "1999-01-01", "date_expr": "금요일"}).date == friday
     # expr가 없으면 모델 값 유지
     assert coerce_item({"title": "x", "date": "2026-07-01"}).date == "2026-07-01"
     # update 경로
